@@ -1,0 +1,5 @@
+logmonitor
+*.swp
+tags
+*~
+.*
