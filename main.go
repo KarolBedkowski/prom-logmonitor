@@ -27,8 +27,20 @@ var (
 		"Address to listen on for web interface and telemetry.")
 )
 
+var (
+	workersStatus = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "logmonitor",
+			Name:      "worker_status",
+			Help:      "Workers status",
+		},
+		[]string{"metric", "status"},
+	)
+)
+
 func init() {
 	prometheus.MustRegister(version.NewCollector("logmonitor"))
+	prometheus.MustRegister(workersStatus)
 }
 
 func main() {
@@ -90,6 +102,7 @@ func main() {
 		systemd.Notify("STOPPING=1\r\nSTATUS=stopping")
 		for _, m := range monitors {
 			m.Stop()
+			setMonitorStatus(m.Metric(), statusStopped)
 		}
 		systemd.NotifyStatus("stopped")
 		os.Exit(0)
@@ -109,18 +122,42 @@ func main() {
 
 func createMonitors(c *Configuration) (monitors []*Monitor) {
 	for _, l := range c.Files {
+		setMonitorStatus(l.Metric, statusStopped)
 		if !l.Enabled {
 			continue
 		}
 		m, err := NewMonitor(l)
 		if err != nil {
 			log.Errorf("Creating monitor %s error: %s", l.File, err)
+			setMonitorStatus(l.Metric, statusError)
 			continue
 		}
 		monitors = append(monitors, m)
 		if err := m.Start(); err != nil {
+			setMonitorStatus(l.Metric, statusError)
 			log.Errorf("Start monitor %s error: %s", l.File, err)
+		} else {
+			setMonitorStatus(l.Metric, statusRunning)
 		}
 	}
 	return
+}
+
+type monitorStatus string
+
+func (m monitorStatus) String() string {
+	return string(m)
+}
+
+const (
+	statusRunning monitorStatus = "running"
+	statusStopped monitorStatus = "stopped"
+	statusError   monitorStatus = "error"
+)
+
+func setMonitorStatus(metric string, status monitorStatus) {
+	workersStatus.WithLabelValues(metric, statusError.String()).Set(0.0)
+	workersStatus.WithLabelValues(metric, statusStopped.String()).Set(0.0)
+	workersStatus.WithLabelValues(metric, statusRunning.String()).Set(0.0)
+	workersStatus.WithLabelValues(metric, status.String()).Set(1.0)
 }

@@ -153,6 +153,11 @@ func (m *Monitor) Start() error {
 	return nil
 }
 
+// Metric returns metric name from monitor
+func (m *Monitor) Metric() string {
+	return m.c.Metric
+}
+
 // Stop worker
 func (m *Monitor) Stop() {
 	if m.t != nil {
