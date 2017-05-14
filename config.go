@@ -11,13 +11,16 @@ import (
 )
 
 type (
+	// Filter define patterns for include/exclude
 	Filter struct {
+		// Include is list patterns to find in files
 		Include []string
+		// Exclude is list patterns that line must not contain to accept
 		Exclude []string
 	}
 
-	// LogFile configure one worker
-	LogFile struct {
+	// WorkerConf configure one worker
+	WorkerConf struct {
 		// File to read
 		File string
 		// Metric name to export
@@ -30,17 +33,17 @@ type (
 
 	// Configuration keep application configuration
 	Configuration struct {
-		// Files is list of workers
-		Files []*LogFile
+		// Workers is list of workers
+		Workers []*WorkerConf
 	}
 )
 
 func (c *Configuration) validate() error {
-
-	if len(c.Files) == 0 {
+	if len(c.Workers) == 0 {
 		return fmt.Errorf("no files to monitor")
 	}
-	for _, f := range c.Files {
+
+	for _, f := range c.Workers {
 		if f.File == "" {
 			return fmt.Errorf("missing 'file' in %+v", f)
 		}
@@ -48,6 +51,7 @@ func (c *Configuration) validate() error {
 			return fmt.Errorf("missing 'metric' in %+v", f)
 		}
 	}
+
 	return nil
 }
 

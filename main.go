@@ -65,7 +65,7 @@ func main() {
 
 	http.Handle("/metrics", promhttp.Handler())
 
-	monitors := createMonitors(c)
+	monitors := createWorkers(c)
 
 	// handle hup for reloading configuration
 	hup := make(chan os.Signal)
@@ -82,7 +82,7 @@ func main() {
 					for _, m := range monitors {
 						m.Stop()
 					}
-					monitors = createMonitors(c)
+					monitors = createWorkers(c)
 
 					log.Info("configuration reloaded")
 				} else {
@@ -102,7 +102,7 @@ func main() {
 		systemd.Notify("STOPPING=1\r\nSTATUS=stopping")
 		for _, m := range monitors {
 			m.Stop()
-			setMonitorStatus(m.Metric(), statusStopped)
+			setWorkerStatus(m.Metric(), statusStopped)
 		}
 		systemd.NotifyStatus("stopped")
 		os.Exit(0)
@@ -120,24 +120,24 @@ func main() {
 	<-done
 }
 
-func createMonitors(c *Configuration) (monitors []*Monitor) {
-	for _, l := range c.Files {
-		setMonitorStatus(l.Metric, statusStopped)
+func createWorkers(c *Configuration) (monitors []*Worker) {
+	for _, l := range c.Workers {
+		setWorkerStatus(l.Metric, statusStopped)
 		if !l.Enabled {
 			continue
 		}
-		m, err := NewMonitor(l)
+		m, err := NewWorker(l)
 		if err != nil {
 			log.Errorf("Creating monitor %s error: %s", l.File, err)
-			setMonitorStatus(l.Metric, statusError)
+			setWorkerStatus(l.Metric, statusError)
 			continue
 		}
 		monitors = append(monitors, m)
 		if err := m.Start(); err != nil {
-			setMonitorStatus(l.Metric, statusError)
+			setWorkerStatus(l.Metric, statusError)
 			log.Errorf("Start monitor %s error: %s", l.File, err)
 		} else {
-			setMonitorStatus(l.Metric, statusRunning)
+			setWorkerStatus(l.Metric, statusRunning)
 		}
 	}
 	return
@@ -155,7 +155,7 @@ const (
 	statusError   monitorStatus = "error"
 )
 
-func setMonitorStatus(metric string, status monitorStatus) {
+func setWorkerStatus(metric string, status monitorStatus) {
 	workersStatus.WithLabelValues(metric, statusError.String()).Set(0.0)
 	workersStatus.WithLabelValues(metric, statusStopped.String()).Set(0.0)
 	workersStatus.WithLabelValues(metric, statusRunning.String()).Set(0.0)

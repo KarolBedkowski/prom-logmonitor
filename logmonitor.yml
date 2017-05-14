@@ -1,4 +1,4 @@
-files:
+workers:
   - file: /var/log/messages
     metric: messages
     enabled: true

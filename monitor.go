@@ -79,9 +79,9 @@ func (f *filters) match(line string) (match bool) {
 	return
 }
 
-// Monitor watch one file and report matched lines
-type Monitor struct {
-	c *LogFile
+// Worker watch one file and report matched lines
+type Worker struct {
+	c *WorkerConf
 	t *tail.Tail
 
 	filters []*filters
@@ -89,9 +89,9 @@ type Monitor struct {
 	log log.Logger
 }
 
-// NewMonitor create new worker from configuration
-func NewMonitor(conf *LogFile) (*Monitor, error) {
-	m := &Monitor{
+// NewWorker create new worker from configuration
+func NewWorker(conf *WorkerConf) (*Worker, error) {
+	m := &Worker{
 		c:   conf,
 		log: log.With("metric", conf.Metric),
 	}
@@ -128,7 +128,7 @@ func NewMonitor(conf *LogFile) (*Monitor, error) {
 }
 
 // Start worker (reading file)
-func (m *Monitor) Start() error {
+func (m *Worker) Start() error {
 	m.log.Debug("start monitoring")
 
 	if m.t != nil {
@@ -154,12 +154,12 @@ func (m *Monitor) Start() error {
 }
 
 // Metric returns metric name from monitor
-func (m *Monitor) Metric() string {
+func (m *Worker) Metric() string {
 	return m.c.Metric
 }
 
 // Stop worker
-func (m *Monitor) Stop() {
+func (m *Worker) Stop() {
 	if m.t != nil {
 		m.log.Debug("stop monitoring")
 		m.t.Stop()
@@ -167,7 +167,7 @@ func (m *Monitor) Stop() {
 	m.t = nil
 }
 
-func (m *Monitor) readFile() {
+func (m *Worker) readFile() {
 	for line := range m.t.Lines {
 		if line.Err != nil {
 			m.log.Info("read file error:", line.Err.Error())
