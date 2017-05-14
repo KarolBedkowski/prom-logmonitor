@@ -11,6 +11,11 @@ import (
 )
 
 type (
+	Filter struct {
+		Include []string
+		Exclude []string
+	}
+
 	// LogFile configure one worker
 	LogFile struct {
 		// File to read
@@ -18,7 +23,7 @@ type (
 		// Metric name to export
 		Metric string
 		// Filters (regexp)
-		Filter []string
+		Patterns []*Filter
 		// Enabled allow disable some workers
 		Enabled bool
 	}

@@ -48,12 +48,43 @@ func init() {
 	prometheus.MustRegister(lineMatchedCntr)
 }
 
+type filters struct {
+	includes []*regexp.Regexp
+	excludes []*regexp.Regexp
+}
+
+func (f *filters) match(line string) (match bool) {
+	if len(f.includes) == 0 {
+		// accept all lines
+		match = true
+	} else {
+		for _, r := range f.includes {
+			if r.MatchString(line) {
+				match = true
+				break
+			}
+		}
+	}
+
+	if match {
+		for _, e := range f.excludes {
+			if e.MatchString(line) {
+				match = false
+				return
+			}
+		}
+		return
+	}
+
+	return
+}
+
 // Monitor watch one file and report matched lines
 type Monitor struct {
 	c *LogFile
 	t *tail.Tail
 
-	r []*regexp.Regexp
+	filters []*filters
 
 	log log.Logger
 }
@@ -65,12 +96,32 @@ func NewMonitor(conf *LogFile) (*Monitor, error) {
 		log: log.With("metric", conf.Metric),
 	}
 
-	for _, f := range conf.Filter {
-		r, err := regexp.Compile(f)
-		if err != nil {
-			return nil, err
+	for _, p := range conf.Patterns {
+		f := &filters{}
+
+		for _, i := range p.Include {
+			r, err := regexp.Compile(i)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"error compile pattern 'include' '%s' for '%s' '%s' : %s",
+					i, conf.Metric, conf.File, err)
+			}
+			f.includes = append(f.includes, r)
 		}
-		m.r = append(m.r, r)
+		for _, e := range p.Exclude {
+			r, err := regexp.Compile(e)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"error compile pattern 'exclude' '%s' for '%s' '%s' : %s",
+					e, conf.Metric, conf.File, err)
+			}
+			f.excludes = append(f.excludes, r)
+		}
+
+		if len(f.includes) > 0 || len(f.excludes) > 0 {
+			m.filters = append(m.filters, f)
+			m.log.Debugf("add filter: %+v", f)
+		}
 	}
 
 	return m, nil
@@ -121,11 +172,11 @@ func (m *Monitor) readFile() {
 		lineProcessedCntr.WithLabelValues(m.c.Metric).Inc()
 		accepted := false
 		// process file
-		if len(m.r) == 0 {
+		if len(m.filters) == 0 {
 			accepted = true
 		} else {
-			for _, r := range m.r {
-				if r.MatchString(line.Text) {
+			for _, p := range m.filters {
+				if p.match(line.Text) {
 					accepted = true
 					break
 				}

@@ -2,13 +2,18 @@ files:
   - file: /var/log/messages
     metric: messages
     enabled: true
-    filter:
-      - error
-      - "perf:"
-      - ".*took too long.*"
+    patterns:
+      - include:
+        - error
+        - "perf:"
+        - ".*took too long.*"
+        - "hpet"
+        exclude:
+        - ".*ttty.*"
   
   - file: /var/log/syslog
     metric: syslog_systemd
     enabled: true
-    filter:
-      - "systemd\\[\\d+\\]"
+    patterns:
+      - include:
+        - "systemd\\[\\d+\\]"
