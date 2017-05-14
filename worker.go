@@ -41,11 +41,21 @@ var (
 		},
 		[]string{"metric"},
 	)
+
+	lineLastMatch = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "logmonitor",
+			Name:      "line_last_match_seconds",
+			Help:      "Last line match unix time",
+		},
+		[]string{"metric"},
+	)
 )
 
 func init() {
 	prometheus.MustRegister(lineProcessedCntr)
 	prometheus.MustRegister(lineMatchedCntr)
+	prometheus.MustRegister(lineLastMatch)
 }
 
 type filters struct {
@@ -190,6 +200,7 @@ func (m *Worker) readFile() {
 		if accepted {
 			m.log.Debugf("accepted line '%v'", line.Text)
 			lineMatchedCntr.WithLabelValues(m.c.Metric).Inc()
+			lineLastMatch.WithLabelValues(m.c.Metric).SetToCurrentTime()
 		}
 	}
 }
