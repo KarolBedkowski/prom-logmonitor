@@ -150,6 +150,7 @@ func (m *Worker) Start() error {
 			Follow:   true,
 			ReOpen:   true,
 			Location: &tail.SeekInfo{Offset: 0, Whence: os.SEEK_END},
+			Logger:   tail.DiscardingLogger,
 		},
 	)
 	if err != nil {
