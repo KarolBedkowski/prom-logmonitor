@@ -6,8 +6,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/prometheus/common/log"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
+	"strings"
 )
 
 type (
@@ -17,6 +19,8 @@ type (
 		Include []string
 		// Exclude is list patterns that line must not contain to accept
 		Exclude []string
+
+		XUnknown map[string]interface{} `yaml:",inline"`
 	}
 
 	// WorkerConf configure one worker
@@ -29,14 +33,30 @@ type (
 		Patterns []*Filter
 		// Enabled allow disable some workers
 		Enabled bool
+
+		XUnknown map[string]interface{} `yaml:",inline"`
 	}
 
 	// Configuration keep application configuration
 	Configuration struct {
 		// Workers is list of workers
 		Workers []*WorkerConf
+
+		XUnknown map[string]interface{} `yaml:",inline"`
 	}
 )
+
+func checkUnknown(m map[string]interface{}) (invalid string) {
+	if len(m) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+
+	return strings.Join(keys, ", ")
+}
 
 func (c *Configuration) validate() error {
 	if len(c.Workers) == 0 {
@@ -49,6 +69,23 @@ func (c *Configuration) validate() error {
 		}
 		if f.Metric == "" {
 			return fmt.Errorf("missing 'metric' in %+v", f)
+		}
+	}
+
+	// check for unknown fields
+	if msg := checkUnknown(c.XUnknown); msg != "" {
+		log.Warnf("unknown fields in configuraton: %s", msg)
+	}
+
+	for i, f := range c.Workers {
+		if msg := checkUnknown(f.XUnknown); msg != "" {
+			log.Warnf("unknown fields in worker %d [%s]: %s", i+1, f.Metric, msg)
+		}
+
+		for j, p := range f.Patterns {
+			if msg := checkUnknown(p.XUnknown); msg != "" {
+				log.Warnf("unknown fields in worker %d [%s] patterns %d: %s", i+1, f.Metric, j+1, msg)
+			}
 		}
 	}
 
