@@ -17,3 +17,19 @@ workers:
     patterns:
       - include:
         - "systemd\\[\\d+\\]"
+  
+  - file: :sd_journal/system
+    metric: sd_journal_system
+    enabled: true
+
+  - file: :sd_journal/root
+    metric: sd_journal_root
+    enabled: true
+
+  - file: :sd_journal/user
+    metric: sd_journal_user
+    enabled: true
+
+  - file: :sd_journal
+    metric: sd_journal
+    enabled: true

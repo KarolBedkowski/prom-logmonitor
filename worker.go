@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/common/log"
 	"os"
 	"regexp"
+	"strings"
 )
 
 var (
@@ -63,6 +64,34 @@ type filters struct {
 	excludes []*regexp.Regexp
 }
 
+func BuildFilters(patterns []*Filter) (fs []*filters, err error) {
+	for _, p := range patterns {
+		f := &filters{}
+
+		for _, i := range p.Include {
+			r, err := regexp.Compile(i)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"error compile pattern 'include' '%s': %s", i, err)
+			}
+			f.includes = append(f.includes, r)
+		}
+		for _, e := range p.Exclude {
+			r, err := regexp.Compile(e)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"error compile pattern 'exclude' '%s': %s", e, err)
+			}
+			f.excludes = append(f.excludes, r)
+		}
+
+		if len(f.includes) > 0 || len(f.excludes) > 0 {
+			fs = append(fs, f)
+		}
+	}
+	return
+}
+
 func (f *filters) match(line string) (match bool) {
 	if len(f.includes) == 0 {
 		// accept all lines
@@ -89,8 +118,14 @@ func (f *filters) match(line string) (match bool) {
 	return
 }
 
+type Worker interface {
+	Start() error
+	Metric() string
+	Stop()
+}
+
 // Worker watch one file and report matched lines
-type Worker struct {
+type WorkerFile struct {
 	c *WorkerConf
 	t *tail.Tail
 
@@ -100,45 +135,23 @@ type Worker struct {
 }
 
 // NewWorker create new worker from configuration
-func NewWorker(conf *WorkerConf) (*Worker, error) {
-	m := &Worker{
+func NewWorkerFile(conf *WorkerConf) (Worker, error) {
+	m := &WorkerFile{
 		c:   conf,
 		log: log.With("metric", conf.Metric),
 	}
 
-	for _, p := range conf.Patterns {
-		f := &filters{}
-
-		for _, i := range p.Include {
-			r, err := regexp.Compile(i)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"error compile pattern 'include' '%s' for '%s' '%s' : %s",
-					i, conf.Metric, conf.File, err)
-			}
-			f.includes = append(f.includes, r)
-		}
-		for _, e := range p.Exclude {
-			r, err := regexp.Compile(e)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"error compile pattern 'exclude' '%s' for '%s' '%s' : %s",
-					e, conf.Metric, conf.File, err)
-			}
-			f.excludes = append(f.excludes, r)
-		}
-
-		if len(f.includes) > 0 || len(f.excludes) > 0 {
-			m.filters = append(m.filters, f)
-			m.log.Debugf("add filter: %+v", f)
-		}
+	var err error
+	m.filters, err = BuildFilters(conf.Patterns)
+	if err != nil {
+		return nil, fmt.Errorf("in '%s' for '%s' %s", err.Error())
 	}
 
 	return m, nil
 }
 
 // Start worker (reading file)
-func (m *Worker) Start() error {
+func (m *WorkerFile) Start() error {
 	m.log.Debug("start monitoring")
 
 	if m.t != nil {
@@ -165,12 +178,12 @@ func (m *Worker) Start() error {
 }
 
 // Metric returns metric name from monitor
-func (m *Worker) Metric() string {
+func (m *WorkerFile) Metric() string {
 	return m.c.Metric
 }
 
 // Stop worker
-func (m *Worker) Stop() {
+func (m *WorkerFile) Stop() {
 	if m.t != nil {
 		m.log.Debug("stop monitoring")
 		m.t.Stop()
@@ -178,7 +191,7 @@ func (m *Worker) Stop() {
 	m.t = nil
 }
 
-func (m *Worker) readFile() {
+func (m *WorkerFile) readFile() {
 	for line := range m.t.Lines {
 		if line.Err != nil {
 			m.log.Info("read file error:", line.Err.Error())
@@ -204,4 +217,11 @@ func (m *Worker) readFile() {
 			lineLastMatch.WithLabelValues(m.c.Metric).SetToCurrentTime()
 		}
 	}
+}
+
+func NewWorker(conf *WorkerConf) (Worker, error) {
+	if strings.HasPrefix(conf.File, ":sd_journal") {
+		return NewWorkerSDJournal(conf)
+	}
+	return NewWorkerFile(conf)
 }
