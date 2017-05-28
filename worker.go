@@ -59,14 +59,16 @@ func init() {
 	prometheus.MustRegister(lineLastMatch)
 }
 
-type filters struct {
+// Filters configure include/exclude patterns
+type Filters struct {
 	includes []*regexp.Regexp
 	excludes []*regexp.Regexp
 }
 
-func BuildFilters(patterns []*Filter) (fs []*filters, err error) {
+// BuildFilters build list of patterns according to configuration
+func BuildFilters(patterns []*Filter) (fs []*Filters, err error) {
 	for _, p := range patterns {
-		f := &filters{}
+		f := &Filters{}
 
 		for _, i := range p.Include {
 			r, err := regexp.Compile(i)
@@ -92,7 +94,7 @@ func BuildFilters(patterns []*Filter) (fs []*filters, err error) {
 	return
 }
 
-func (f *filters) match(line string) (match bool) {
+func (f *Filters) match(line string) (match bool) {
 	if len(f.includes) == 0 {
 		// accept all lines
 		match = true
@@ -118,23 +120,24 @@ func (f *filters) match(line string) (match bool) {
 	return
 }
 
+// Worker read log file in background
 type Worker interface {
 	Start() error
 	Metric() string
 	Stop()
 }
 
-// Worker watch one file and report matched lines
+// WorkerFile watch one file and report matched lines
 type WorkerFile struct {
 	c *WorkerConf
 	t *tail.Tail
 
-	filters []*filters
+	filters []*Filters
 
 	log log.Logger
 }
 
-// NewWorker create new worker from configuration
+// NewWorkerFile create new worker from configuration
 func NewWorkerFile(conf *WorkerConf) (Worker, error) {
 	m := &WorkerFile{
 		c:   conf,
@@ -144,7 +147,7 @@ func NewWorkerFile(conf *WorkerConf) (Worker, error) {
 	var err error
 	m.filters, err = BuildFilters(conf.Patterns)
 	if err != nil {
-		return nil, fmt.Errorf("in '%s' for '%s' %s", err.Error())
+		return nil, fmt.Errorf("in '%s' for '%s' %s", conf.File, conf.Metric, err.Error())
 	}
 
 	return m, nil
@@ -219,6 +222,7 @@ func (m *WorkerFile) readFile() {
 	}
 }
 
+// NewWorker create new background worker according to configuration
 func NewWorker(conf *WorkerConf) (Worker, error) {
 	if strings.HasPrefix(conf.File, ":sd_journal") {
 		return NewWorkerSDJournal(conf)

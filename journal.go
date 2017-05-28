@@ -1,6 +1,7 @@
 //
 // journal.go
-// From: https://gist.github.com/stuart-warren/240aaa21fa6f2d69457a
+// based on: https://gist.github.com/stuart-warren/240aaa21fa6f2d69457a,
+// https://github.com/remerge/j2q/blob/master/service.go
 
 package main
 
@@ -27,7 +28,7 @@ type WorkerSDJournal struct {
 	log log.Logger
 }
 
-// NewWorker create new worker from configuration
+// NewWorkerSDJournal create new worker from configuration
 func NewWorkerSDJournal(conf *WorkerConf) (Worker, error) {
 	m := &WorkerSDJournal{
 		c:   conf,
@@ -37,7 +38,7 @@ func NewWorkerSDJournal(conf *WorkerConf) (Worker, error) {
 	var err error
 	m.filters, err = BuildFilters(conf.Patterns)
 	if err != nil {
-		return nil, fmt.Errorf("in '%s' for '%s' %s", err.Error())
+		return nil, fmt.Errorf("in '%s' for '%s' %s", conf.File, conf.Metric, err.Error())
 	}
 	return m, nil
 }
