@@ -70,13 +70,19 @@ func (c *Configuration) validate() error {
 		return fmt.Errorf("no files to monitor")
 	}
 
-	for _, f := range c.Workers {
+	usedFiles := make(map[string]int)
+
+	for i, f := range c.Workers {
 		if f.Disabled {
 			continue
 		}
 		if f.File == "" {
 			return fmt.Errorf("missing 'file' in %+v", f)
 		}
+		if _, exists := usedFiles[f.File]; exists {
+			return fmt.Errorf("file '%s' already defined in rule %d", f.File, exists)
+		}
+		usedFiles[f.File] = i + 1
 	}
 
 	// check for unknown fields
