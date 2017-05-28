@@ -21,17 +21,31 @@ LDFLAGS_PI="-w -s \
 	-X github.com/prometheus/common/version.BuildUser=$(USER) \
 	-X github.com/prometheus/common/version.Branch=$(BRANCH)"
 
+RPIROOT=/home/k/mnt/pi/
+
+#	-rpath=/home/k/mnt/pi/lib/arm-linux-gnueabihf \
+#	-rpath-link=/home/k/mnt/pi/lib/arm-linux-gnueabihf \
+#	-sysroot=/home/k/mnt/pi/ \
+#	-L/home/k/mnt/pi/lib/arm-linux-gnueabihf/ \
+
 build: 
-	go build -v -o logmonitor --ldflags $(LDFLAGS)
+	CGO_ENABLED=1 go build -v -o logmonitor -ldflags $(LDFLAGS)
 
 build_pi: 
 	GOGCCFLAGS="-fPIC -O4 -Ofast -pipe -march=native -mcpu=arm1176jzf-s -mfpu=vfp -mfloat-abi=hard -s" \
-		GOARCH=arm GOARM=6 \
-		go build -v -o logmonitor-arm --ldflags $(LDFLAGS_PI)
+		GOARCH=arm GOARM=6 CGO_ENABLED=1 GOOS=linux \
+		CC=arm-linux-gnueabi-gcc  \
+		CXX=arm-linux-gnueabi-g++ \
+		CGO_LDFLAGS="-L$(RPIROOT)/lib/arm-linux-gnueabihf -lsystemd \
+			-Wl,-rpath-link=$(RPIROOT)/lib/arm-linux-gnueabihf \
+			-Wl,-rpath-link=$(RPIROOT)/lib/ \
+			-Wl,-rpath-link=$(RPIROOT)/usr/lib/ \
+			-Wl,-rpath-link=$(RPIROOT)/usr/lib/arm-linux-gnueabihf " \
+		go build -v -o logmonitor-arm -ldflags $(LDFLAGS_PI)
 
 run:
 	#go run -v *.go -log.level debug
-	go-reload `ls *.go | grep -v _test.go` -log.level debug
+	CGO_ENABLED="1" go-reload `ls *.go | grep -v _test.go` -log.level debug
 
 clean:
 	rm -f logmonitor logmonitor-arm
