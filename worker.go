@@ -7,10 +7,8 @@ package main
 
 import (
 	"fmt"
-	"github.com/hpcloud/tail"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
-	"os"
 	"regexp"
 	"strings"
 )
@@ -22,7 +20,7 @@ var (
 			Name:      "lines_processed_total",
 			Help:      "Total number lines processed by worker",
 		},
-		[]string{"metric"},
+		[]string{"file"},
 	)
 
 	lineMatchedCntr = prometheus.NewCounterVec(
@@ -31,7 +29,7 @@ var (
 			Name:      "lines_matched_total",
 			Help:      "Total number lines matched by worker",
 		},
-		[]string{"metric"},
+		[]string{"file", "metric"},
 	)
 
 	lineErrosCntr = prometheus.NewCounterVec(
@@ -40,7 +38,7 @@ var (
 			Name:      "lines_read_errors_total",
 			Help:      "Total number errors occurred while reading lines by worker",
 		},
-		[]string{"metric"},
+		[]string{"file"},
 	)
 
 	lineLastMatch = prometheus.NewGaugeVec(
@@ -49,13 +47,14 @@ var (
 			Name:      "line_last_match_seconds",
 			Help:      "Last line match unix time",
 		},
-		[]string{"metric"},
+		[]string{"file", "metric"},
 	)
 )
 
 func init() {
 	prometheus.MustRegister(lineProcessedCntr)
 	prometheus.MustRegister(lineMatchedCntr)
+	prometheus.MustRegister(lineErrosCntr)
 	prometheus.MustRegister(lineLastMatch)
 }
 
@@ -120,112 +119,135 @@ func (f *Filters) match(line string) (match bool) {
 	return
 }
 
-// Worker read log file in background
-type Worker interface {
+// Reader is generic interface for log readers
+type Reader interface {
 	Start() error
-	Metric() string
-	Stop()
+	Read() (line string, err error)
+	Stop() error
 }
 
-// WorkerFile watch one file and report matched lines
-type WorkerFile struct {
-	c *WorkerConf
-	t *tail.Tail
-
+type metricFilters struct {
+	name    string
 	filters []*Filters
-
-	log log.Logger
 }
 
-// NewWorkerFile create new worker from configuration
-func NewWorkerFile(conf *WorkerConf) (Worker, error) {
-	m := &WorkerFile{
-		c:   conf,
-		log: log.With("metric", conf.Metric),
-	}
-
-	var err error
-	m.filters, err = BuildFilters(conf.Patterns)
-	if err != nil {
-		return nil, fmt.Errorf("in '%s' for '%s' %s", conf.File, conf.Metric, err.Error())
-	}
-
-	return m, nil
+func (m metricFilters) String() string {
+	return m.name
 }
 
-// Start worker (reading file)
-func (m *WorkerFile) Start() error {
-	m.log.Debug("start monitoring")
+// Worker watch one file and report matched lines
+type Worker struct {
+	c *WorkerConf
 
-	if m.t != nil {
-		return fmt.Errorf("already failing")
-	}
+	metrics []*metricFilters
 
-	t, err := tail.TailFile(m.c.File,
-		tail.Config{
-			Follow:   true,
-			ReOpen:   true,
-			Location: &tail.SeekInfo{Offset: 0, Whence: os.SEEK_END},
-			Logger:   tail.DiscardingLogger,
-		},
-	)
-	if err != nil {
-		return err
-	}
-	m.t = t
-
-	go m.readFile()
-
-	m.log.Info("worker started")
-	return nil
-}
-
-// Metric returns metric name from monitor
-func (m *WorkerFile) Metric() string {
-	return m.c.Metric
-}
-
-// Stop worker
-func (m *WorkerFile) Stop() {
-	if m.t != nil {
-		m.log.Debug("stop monitoring")
-		m.t.Stop()
-	}
-	m.t = nil
-}
-
-func (m *WorkerFile) readFile() {
-	for line := range m.t.Lines {
-		if line.Err != nil {
-			m.log.Info("read file error:", line.Err.Error())
-			lineErrosCntr.WithLabelValues(m.c.Metric).Inc()
-			continue
-		}
-		lineProcessedCntr.WithLabelValues(m.c.Metric).Inc()
-		accepted := false
-		// process file
-		if len(m.filters) == 0 {
-			accepted = true
-		} else {
-			for _, p := range m.filters {
-				if p.match(line.Text) {
-					accepted = true
-					break
-				}
-			}
-		}
-		if accepted {
-			m.log.Debugf("accepted line '%v'", line.Text)
-			lineMatchedCntr.WithLabelValues(m.c.Metric).Inc()
-			lineLastMatch.WithLabelValues(m.c.Metric).SetToCurrentTime()
-		}
-	}
+	log    log.Logger
+	reader Reader
 }
 
 // NewWorker create new background worker according to configuration
-func NewWorker(conf *WorkerConf) (Worker, error) {
-	if strings.HasPrefix(conf.File, ":sd_journal") {
-		return NewWorkerSDJournal(conf)
+// Each worker monitor only one file and one file can be monitored only
+// by one worker.
+func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
+	w := &Worker{
+		c:   conf,
+		log: log.With("file", conf.File),
 	}
-	return NewWorkerFile(conf)
+
+	var reader Reader
+
+	switch {
+	case strings.HasPrefix(conf.File, ":sd_journal"):
+		reader, err = NewSDJournalReader(conf, w.log)
+	default:
+		reader, err = NewPlainFileReader(conf, w.log)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	w.reader = reader
+
+	for _, metric := range conf.Metrics {
+		if metric.Disabled {
+			continue
+		}
+		var ftrs []*Filters
+		ftrs, err = BuildFilters(metric.Patterns)
+		if err != nil {
+			return nil, err
+		}
+		w.metrics = append(w.metrics, &metricFilters{
+			name:    metric.Name,
+			filters: ftrs,
+		})
+	}
+
+	return w, nil
+}
+
+// Start worker (reading file)
+func (w *Worker) Start() error {
+	if w.reader != nil {
+		w.log.Debug("start monitoring")
+
+		if err := w.reader.Start(); err != nil {
+			return err
+		}
+
+		go w.read()
+
+		w.log.Info("worker started")
+	}
+	return nil
+}
+
+// Filename returns file monitored by worker
+func (w *Worker) Filename() string {
+	return w.c.File
+}
+
+// Stop worker
+func (w *Worker) Stop() {
+	if w.reader != nil {
+		w.log.Debug("stop monitoring")
+		w.reader.Stop()
+	}
+}
+
+func (w *Worker) read() {
+	for {
+		line, err := w.reader.Read()
+		if err != nil {
+			w.log.Info("read file error:", err.Error())
+			lineErrosCntr.WithLabelValues(w.c.File).Inc()
+			continue
+		}
+
+		lineProcessedCntr.WithLabelValues(w.c.File).Inc()
+
+		for _, mf := range w.metrics {
+
+			//			w.log.Debugf("checking %s", mf)
+
+			accepted := false
+			// process file
+			if len(mf.filters) == 0 {
+				accepted = true
+			} else {
+				for _, p := range mf.filters {
+					if p.match(line) {
+						accepted = true
+						break
+					}
+				}
+			}
+
+			if accepted {
+				w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
+				lineMatchedCntr.WithLabelValues(w.c.File, mf.name).Inc()
+				lineLastMatch.WithLabelValues(w.c.File, mf.name).SetToCurrentTime()
+			}
+		}
+	}
 }
