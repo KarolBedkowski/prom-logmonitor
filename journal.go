@@ -13,6 +13,8 @@ import "C"
 import (
 	"fmt"
 	"github.com/prometheus/common/log"
+	"strings"
+	"unsafe"
 )
 
 // WorkerSDJournal watch one file and report matched lines
@@ -104,7 +106,19 @@ func (m *WorkerSDJournal) readFile() {
 			continue
 		}
 
-		line := C.GoString(cursor)
+		var data *C.char
+		var length C.size_t
+		line := ""
+		for C.sd_journal_restart_data(m.j); C.sd_journal_enumerate_data(m.j, (*unsafe.Pointer)(unsafe.Pointer(&data)), &length) > 0; {
+			data := C.GoString(data)
+			//m.log.Debugf("parts: '%v'", data)
+			if strings.HasPrefix(data, "MESSAGE") {
+				parts := strings.Split(data, "=")
+				line = parts[1]
+				break
+			}
+		}
+
 		if line == "" {
 			continue
 		}
@@ -122,6 +136,7 @@ func (m *WorkerSDJournal) readFile() {
 				}
 			}
 		}
+
 		if accepted {
 			m.log.Debugf("accepted line '%v'", line)
 			lineMatchedCntr.WithLabelValues(m.c.Metric).Inc()
