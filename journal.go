@@ -18,130 +18,94 @@ import (
 	"unsafe"
 )
 
-// WorkerSDJournal watch one file and report matched lines
-type WorkerSDJournal struct {
+// SDJournalReader watch one file and report matched lines
+type SDJournalReader struct {
 	c *WorkerConf
 	j *C.struct_sd_journal
-
-	filters []*filters
 
 	log log.Logger
 }
 
-// NewWorkerSDJournal create new worker from configuration
-func NewWorkerSDJournal(conf *WorkerConf) (Worker, error) {
-	m := &WorkerSDJournal{
+// NewSDJournalReader create reader for systemd journal
+func NewSDJournalReader(conf *WorkerConf, l log.Logger) (*SDJournalReader, error) {
+	w := &SDJournalReader{
 		c:   conf,
-		log: log.With("metric", conf.Metric),
+		log: l,
 	}
-
-	var err error
-	m.filters, err = BuildFilters(conf.Patterns)
-	if err != nil {
-		return nil, fmt.Errorf("in '%s' for '%s' %s", conf.File, conf.Metric, err.Error())
-	}
-	return m, nil
+	return w, nil
 }
 
 // Start worker (reading file)
-func (m *WorkerSDJournal) Start() error {
-	m.log.Debug("start monitoring SD Journal")
-
-	if m.j != nil {
-		return fmt.Errorf("already failing")
+func (s *SDJournalReader) Start() error {
+	if s.j != nil {
+		return fmt.Errorf("already reading")
 	}
 
-	m.j = new(C.struct_sd_journal)
+	s.j = new(C.struct_sd_journal)
 
 	var flag C.int = C.SD_JOURNAL_LOCAL_ONLY
-	switch m.c.File {
+	switch s.c.File {
 	case ":sd_journal/system":
 		flag = C.SD_JOURNAL_SYSTEM
 	case ":sd_journal/user":
 		flag = C.SD_JOURNAL_CURRENT_USER
 	case ":sd_journal/root":
 		flag = C.SD_JOURNAL_OS_ROOT
+	case ":sd_journal/local":
+		flag = C.SD_JOURNAL_LOCAL_ONLY
+	default:
+		s.log.Warnf("unknown sd_journal type: '%v'; using local_only ", s.c.File)
 	}
-	if res := C.sd_journal_open(&m.j, flag); res < 0 {
-		m.j = nil
+	if res := C.sd_journal_open(&s.j, flag); res < 0 {
+		s.j = nil
 		return fmt.Errorf("journal open error: %s", C.GoString(C.strerror(-res)))
 	}
 
-	C.sd_journal_seek_tail(m.j)
-
-	go m.readFile()
-
-	m.log.Info("worker started")
+	C.sd_journal_seek_tail(s.j)
 	return nil
 }
 
-// Metric returns metric name from monitor
-func (m *WorkerSDJournal) Metric() string {
-	return m.c.Metric
-}
-
 // Stop worker
-func (m *WorkerSDJournal) Stop() {
-	if m.j != nil {
-		m.log.Debug("stop monitoring")
-		C.sd_journal_close(m.j)
+func (s *SDJournalReader) Stop() error {
+	if s.j != nil {
+		C.sd_journal_close(s.j)
+		s.j = nil
 	}
-	m.j = nil
+	return nil
 }
 
-func (m *WorkerSDJournal) readFile() {
+func (s *SDJournalReader) Read() (line string, err error) {
 	for {
-		if res := C.sd_journal_next(m.j); res < 0 {
+		if res := C.sd_journal_next(s.j); res < 0 {
 			continue
 		} else if res == 0 {
-			res = C.sd_journal_wait(m.j, 1000000)
+			res = C.sd_journal_wait(s.j, 1000000)
 			if res < 0 {
-				m.log.Warnf("failed to wait for changes: %s", C.GoString(C.strerror(-res)))
+				s.log.Warnf("failed to wait for changes: %s", C.GoString(C.strerror(-res)))
 			}
 			continue
 		}
 
 		var cursor *C.char
-		if res := C.sd_journal_get_cursor(m.j, &cursor); res < 0 {
-			m.log.Warnf("failed to get cursor: %s", C.GoString(C.strerror(-res)))
+		if res := C.sd_journal_get_cursor(s.j, &cursor); res < 0 {
+			s.log.Warnf("failed to get cursor: %s", C.GoString(C.strerror(-res)))
 			continue
 		}
+
+		C.sd_journal_restart_data(s.j)
 
 		var data *C.char
 		var length C.size_t
-		line := ""
-		for C.sd_journal_restart_data(m.j); C.sd_journal_enumerate_data(m.j, (*unsafe.Pointer)(unsafe.Pointer(&data)), &length) > 0; {
+		for C.sd_journal_enumerate_data(s.j, (*unsafe.Pointer)(unsafe.Pointer(&data)), &length) > 0 {
 			data := C.GoString(data)
-			//m.log.Debugf("parts: '%v'", data)
-			if strings.HasPrefix(data, "MESSAGE") {
+			//s.log.Debugf("parts: '%v'", data)
+			if strings.HasPrefix(data, "MESSAGE=") {
 				parts := strings.Split(data, "=")
-				line = parts[1]
-				break
-			}
-		}
-
-		if line == "" {
-			continue
-		}
-
-		lineProcessedCntr.WithLabelValues(m.c.Metric).Inc()
-		accepted := false
-		// process file
-		if len(m.filters) == 0 {
-			accepted = true
-		} else {
-			for _, p := range m.filters {
-				if p.match(line) {
-					accepted = true
-					break
+				line := parts[1]
+				if line != "" {
+					return line, nil
 				}
 			}
-		}
-
-		if accepted {
-			m.log.Debugf("accepted line '%v'", line)
-			lineMatchedCntr.WithLabelValues(m.c.Metric).Inc()
-			lineLastMatch.WithLabelValues(m.c.Metric).SetToCurrentTime()
 		}
 	}
 }

@@ -120,7 +120,7 @@ func main() {
 	<-done
 }
 
-func createWorkers(c *Configuration) (monitors []Worker) {
+func createWorkers(c *Configuration) (monitors []*Worker) {
 	for _, l := range c.Workers {
 		setWorkerStatus(l.Metric, statusStopped)
 		if !l.Enabled {

@@ -7,10 +7,8 @@ package main
 
 import (
 	"fmt"
-	"github.com/hpcloud/tail"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
-	"os"
 	"regexp"
 	"strings"
 )
@@ -120,112 +118,109 @@ func (f *Filters) match(line string) (match bool) {
 	return
 }
 
-// Worker read log file in background
-type Worker interface {
+// Reader is generic interface for log readers
+type Reader interface {
 	Start() error
-	Metric() string
-	Stop()
+	Read() (line string, err error)
+	Stop() error
 }
 
-// WorkerFile watch one file and report matched lines
-type WorkerFile struct {
+// Worker watch one file and report matched lines
+type Worker struct {
 	c *WorkerConf
-	t *tail.Tail
 
 	filters []*Filters
 
-	log log.Logger
+	log    log.Logger
+	reader Reader
 }
 
-// NewWorkerFile create new worker from configuration
-func NewWorkerFile(conf *WorkerConf) (Worker, error) {
-	m := &WorkerFile{
+// NewWorker create new background worker according to configuration
+func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
+	w := &Worker{
 		c:   conf,
 		log: log.With("metric", conf.Metric),
 	}
 
-	var err error
-	m.filters, err = BuildFilters(conf.Patterns)
-	if err != nil {
-		return nil, fmt.Errorf("in '%s' for '%s' %s", conf.File, conf.Metric, err.Error())
+	var reader Reader
+
+	switch {
+	case strings.HasPrefix(conf.File, ":sd_journal"):
+		reader, err = NewSDJournalReader(conf, w.log)
+	default:
+		reader, err = NewPlainFileReader(conf, w.log)
 	}
 
-	return m, nil
+	if err != nil {
+		return nil, err
+	}
+	w.reader = reader
+
+	w.filters, err = BuildFilters(conf.Patterns)
+	if err != nil {
+		return nil, err
+	}
+
+	return w, nil
 }
 
 // Start worker (reading file)
-func (m *WorkerFile) Start() error {
-	m.log.Debug("start monitoring")
+func (w *Worker) Start() error {
+	if w.reader != nil {
+		w.log.Debug("start monitoring")
 
-	if m.t != nil {
-		return fmt.Errorf("already failing")
+		if err := w.reader.Start(); err != nil {
+			return err
+		}
+
+		go w.read()
+
+		w.log.Info("worker started")
 	}
-
-	t, err := tail.TailFile(m.c.File,
-		tail.Config{
-			Follow:   true,
-			ReOpen:   true,
-			Location: &tail.SeekInfo{Offset: 0, Whence: os.SEEK_END},
-			Logger:   tail.DiscardingLogger,
-		},
-	)
-	if err != nil {
-		return err
-	}
-	m.t = t
-
-	go m.readFile()
-
-	m.log.Info("worker started")
 	return nil
 }
 
 // Metric returns metric name from monitor
-func (m *WorkerFile) Metric() string {
-	return m.c.Metric
+func (w *Worker) Metric() string {
+	return w.c.Metric
 }
 
 // Stop worker
-func (m *WorkerFile) Stop() {
-	if m.t != nil {
-		m.log.Debug("stop monitoring")
-		m.t.Stop()
+func (w *Worker) Stop() {
+	if w.reader != nil {
+		w.log.Debug("stop monitoring")
+		w.reader.Stop()
 	}
-	m.t = nil
 }
 
-func (m *WorkerFile) readFile() {
-	for line := range m.t.Lines {
-		if line.Err != nil {
-			m.log.Info("read file error:", line.Err.Error())
-			lineErrosCntr.WithLabelValues(m.c.Metric).Inc()
+func (w *Worker) read() {
+	for {
+		line, err := w.reader.Read()
+		if err != nil {
+			w.log.Info("read file error:", err.Error())
+			lineErrosCntr.WithLabelValues(w.c.Metric).Inc()
 			continue
 		}
-		lineProcessedCntr.WithLabelValues(m.c.Metric).Inc()
+
+		lineProcessedCntr.WithLabelValues(w.c.Metric).Inc()
+
 		accepted := false
 		// process file
-		if len(m.filters) == 0 {
+		if len(w.filters) == 0 {
 			accepted = true
 		} else {
-			for _, p := range m.filters {
-				if p.match(line.Text) {
+			for _, p := range w.filters {
+				if p.match(line) {
 					accepted = true
 					break
 				}
 			}
 		}
+
 		if accepted {
-			m.log.Debugf("accepted line '%v'", line.Text)
-			lineMatchedCntr.WithLabelValues(m.c.Metric).Inc()
-			lineLastMatch.WithLabelValues(m.c.Metric).SetToCurrentTime()
+			w.log.Debugf("accepted line '%v'", line)
+			lineMatchedCntr.WithLabelValues(w.c.Metric).Inc()
+			lineLastMatch.WithLabelValues(w.c.Metric).SetToCurrentTime()
 		}
 	}
-}
-
-// NewWorker create new background worker according to configuration
-func NewWorker(conf *WorkerConf) (Worker, error) {
-	if strings.HasPrefix(conf.File, ":sd_journal") {
-		return NewWorkerSDJournal(conf)
-	}
-	return NewWorkerFile(conf)
 }
