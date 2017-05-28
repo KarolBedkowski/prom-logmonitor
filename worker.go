@@ -20,7 +20,7 @@ var (
 			Name:      "lines_processed_total",
 			Help:      "Total number lines processed by worker",
 		},
-		[]string{"metric"},
+		[]string{"file"},
 	)
 
 	lineMatchedCntr = prometheus.NewCounterVec(
@@ -29,7 +29,7 @@ var (
 			Name:      "lines_matched_total",
 			Help:      "Total number lines matched by worker",
 		},
-		[]string{"metric"},
+		[]string{"file", "metric"},
 	)
 
 	lineErrosCntr = prometheus.NewCounterVec(
@@ -38,7 +38,7 @@ var (
 			Name:      "lines_read_errors_total",
 			Help:      "Total number errors occurred while reading lines by worker",
 		},
-		[]string{"metric"},
+		[]string{"file"},
 	)
 
 	lineLastMatch = prometheus.NewGaugeVec(
@@ -47,13 +47,14 @@ var (
 			Name:      "line_last_match_seconds",
 			Help:      "Last line match unix time",
 		},
-		[]string{"metric"},
+		[]string{"file", "metric"},
 	)
 )
 
 func init() {
 	prometheus.MustRegister(lineProcessedCntr)
 	prometheus.MustRegister(lineMatchedCntr)
+	prometheus.MustRegister(lineErrosCntr)
 	prometheus.MustRegister(lineLastMatch)
 }
 
@@ -125,21 +126,32 @@ type Reader interface {
 	Stop() error
 }
 
+type metricFilters struct {
+	name    string
+	filters []*Filters
+}
+
+func (m metricFilters) String() string {
+	return m.name
+}
+
 // Worker watch one file and report matched lines
 type Worker struct {
 	c *WorkerConf
 
-	filters []*Filters
+	metrics []*metricFilters
 
 	log    log.Logger
 	reader Reader
 }
 
 // NewWorker create new background worker according to configuration
+// Each worker monitor only one file and one file can be monitored only
+// by one worker.
 func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 	w := &Worker{
 		c:   conf,
-		log: log.With("metric", conf.Metric),
+		log: log.With("file", conf.File),
 	}
 
 	var reader Reader
@@ -156,9 +168,19 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 	}
 	w.reader = reader
 
-	w.filters, err = BuildFilters(conf.Patterns)
-	if err != nil {
-		return nil, err
+	for _, metric := range conf.Metrics {
+		if metric.Disabled {
+			continue
+		}
+		var ftrs []*Filters
+		ftrs, err = BuildFilters(metric.Patterns)
+		if err != nil {
+			return nil, err
+		}
+		w.metrics = append(w.metrics, &metricFilters{
+			name:    metric.Name,
+			filters: ftrs,
+		})
 	}
 
 	return w, nil
@@ -180,9 +202,9 @@ func (w *Worker) Start() error {
 	return nil
 }
 
-// Metric returns metric name from monitor
-func (w *Worker) Metric() string {
-	return w.c.Metric
+// Filename returns file monitored by worker
+func (w *Worker) Filename() string {
+	return w.c.File
 }
 
 // Stop worker
@@ -198,29 +220,34 @@ func (w *Worker) read() {
 		line, err := w.reader.Read()
 		if err != nil {
 			w.log.Info("read file error:", err.Error())
-			lineErrosCntr.WithLabelValues(w.c.Metric).Inc()
+			lineErrosCntr.WithLabelValues(w.c.File).Inc()
 			continue
 		}
 
-		lineProcessedCntr.WithLabelValues(w.c.Metric).Inc()
+		lineProcessedCntr.WithLabelValues(w.c.File).Inc()
 
-		accepted := false
-		// process file
-		if len(w.filters) == 0 {
-			accepted = true
-		} else {
-			for _, p := range w.filters {
-				if p.match(line) {
-					accepted = true
-					break
+		for _, mf := range w.metrics {
+
+			//			w.log.Debugf("checking %s", mf)
+
+			accepted := false
+			// process file
+			if len(mf.filters) == 0 {
+				accepted = true
+			} else {
+				for _, p := range mf.filters {
+					if p.match(line) {
+						accepted = true
+						break
+					}
 				}
 			}
-		}
 
-		if accepted {
-			w.log.Debugf("accepted line '%v'", line)
-			lineMatchedCntr.WithLabelValues(w.c.Metric).Inc()
-			lineLastMatch.WithLabelValues(w.c.Metric).SetToCurrentTime()
+			if accepted {
+				w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
+				lineMatchedCntr.WithLabelValues(w.c.File, mf.name).Inc()
+				lineLastMatch.WithLabelValues(w.c.File, mf.name).SetToCurrentTime()
+			}
 		}
 	}
 }

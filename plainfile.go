@@ -62,7 +62,15 @@ func (p *PlainFileReader) Stop() error {
 }
 
 func (p *PlainFileReader) Read() (line string, err error) {
-	l := <-p.t.Lines
+	if p.t == nil {
+		return "", nil
+	}
+
+	l, ok := <-p.t.Lines
+
+	if !ok || l == nil {
+		return "", nil
+	}
 
 	if l.Err != nil {
 		return "", l.Err

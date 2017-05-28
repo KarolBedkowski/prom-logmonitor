@@ -1,35 +1,36 @@
 workers:
   - file: /var/log/messages
-    metric: messages
-    enabled: true
-    patterns:
-      - include:
-        - error
-        - "perf:"
-        - ".*took too long.*"
-        - "hpet"
-        exclude:
-        - ".*ttty.*"
+    metrics:
+      - name: messages
+        disabled: false
+        patterns:
+          - include:
+            - error
+            - "perf:"
+            - ".*took too long.*"
+            - "hpet"
+            exclude:
+            - ".*ttty.*"
   
   - file: /var/log/syslog
-    metric: syslog_systemd
-    enabled: true
-    patterns:
-      - include:
-        - "systemd\\[\\d+\\]"
+    metrics:
+      - name: syslog_systemd
+        patterns:
+          - include:
+            - "systemd\\[\\d+\\]"
   
   - file: :sd_journal/system
-    metric: sd_journal_system
-    enabled: true
+    metrics:
+      - name: sd_journal_system
 
   - file: :sd_journal/root
-    metric: sd_journal_root
-    enabled: true
+    metrics:
+      - name: sd_journal_root
 
   - file: :sd_journal/user
-    metric: sd_journal_user
-    enabled: true
+    metrics:
+      - name: sd_journal_user
 
   - file: :sd_journal
-    metric: sd_journal
-    enabled: true
+    metrics:
+      - name: sd_journal

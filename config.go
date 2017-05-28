@@ -23,16 +23,23 @@ type (
 		XUnknown map[string]interface{} `yaml:",inline"`
 	}
 
+	Metric struct {
+		// Name of metri
+		Name string
+		// Filters (regexp)
+		Patterns []*Filter
+		// Disabled allow disable some workers
+		Disabled bool
+	}
+
 	// WorkerConf configure one worker
 	WorkerConf struct {
 		// File to read
 		File string
 		// Metric name to export
-		Metric string
-		// Filters (regexp)
-		Patterns []*Filter
-		// Enabled allow disable some workers
-		Enabled bool
+		Metrics []*Metric
+		// Disabled allow disable some workers
+		Disabled bool
 
 		XUnknown map[string]interface{} `yaml:",inline"`
 	}
@@ -64,11 +71,11 @@ func (c *Configuration) validate() error {
 	}
 
 	for _, f := range c.Workers {
+		if f.Disabled {
+			continue
+		}
 		if f.File == "" {
 			return fmt.Errorf("missing 'file' in %+v", f)
-		}
-		if f.Metric == "" {
-			return fmt.Errorf("missing 'metric' in %+v", f)
 		}
 	}
 
@@ -78,13 +85,24 @@ func (c *Configuration) validate() error {
 	}
 
 	for i, f := range c.Workers {
-		if msg := checkUnknown(f.XUnknown); msg != "" {
-			log.Warnf("unknown fields in worker %d [%s]: %s", i+1, f.Metric, msg)
+		if f.Disabled {
+			continue
 		}
+		if msg := checkUnknown(f.XUnknown); msg != "" {
+			log.Warnf("unknown fields in worker %d [%s]: %s", i+1, f.Metrics, msg)
+		}
+		for i, m := range f.Metrics {
+			if m.Disabled {
+				continue
+			}
+			if m.Name == "" {
+				return fmt.Errorf("missing metric name in %+v", m)
+			}
 
-		for j, p := range f.Patterns {
-			if msg := checkUnknown(p.XUnknown); msg != "" {
-				log.Warnf("unknown fields in worker %d [%s] patterns %d: %s", i+1, f.Metric, j+1, msg)
+			for j, p := range m.Patterns {
+				if msg := checkUnknown(p.XUnknown); msg != "" {
+					log.Warnf("unknown fields in worker %d [%s] patterns %d: %s", i+1, f.Metrics, j+1, msg)
+				}
 			}
 		}
 	}

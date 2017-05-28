@@ -102,7 +102,7 @@ func main() {
 		systemd.Notify("STOPPING=1\r\nSTATUS=stopping")
 		for _, m := range monitors {
 			m.Stop()
-			setWorkerStatus(m.Metric(), statusStopped)
+			setWorkerStatus(m.Filename(), statusStopped)
 		}
 		systemd.NotifyStatus("stopped")
 		os.Exit(0)
@@ -122,22 +122,24 @@ func main() {
 
 func createWorkers(c *Configuration) (monitors []*Worker) {
 	for _, l := range c.Workers {
-		setWorkerStatus(l.Metric, statusStopped)
-		if !l.Enabled {
+		setWorkerStatus(l.File, statusStopped)
+		if l.Disabled {
 			continue
 		}
+
 		m, err := NewWorker(l)
 		if err != nil {
 			log.Errorf("Creating monitor %s error: %s", l.File, err)
-			setWorkerStatus(l.Metric, statusError)
+			setWorkerStatus(l.File, statusError)
 			continue
 		}
+
 		monitors = append(monitors, m)
 		if err := m.Start(); err != nil {
-			setWorkerStatus(l.Metric, statusError)
+			setWorkerStatus(l.File, statusError)
 			log.Errorf("Start monitor %s error: %s", l.File, err)
 		} else {
-			setWorkerStatus(l.Metric, statusRunning)
+			setWorkerStatus(l.File, statusRunning)
 		}
 	}
 	return
