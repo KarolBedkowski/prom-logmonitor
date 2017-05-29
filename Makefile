@@ -23,13 +23,16 @@ LDFLAGS_PI="-w -s \
 
 RPIROOT=/home/k/mnt/pi/
 
+# enable/disable sdjournal
+GOTAGS=-tags 'sdjournal'
+
 #	-rpath=/home/k/mnt/pi/lib/arm-linux-gnueabihf \
 #	-rpath-link=/home/k/mnt/pi/lib/arm-linux-gnueabihf \
 #	-sysroot=/home/k/mnt/pi/ \
 #	-L/home/k/mnt/pi/lib/arm-linux-gnueabihf/ \
 
 build: 
-	CGO_ENABLED=1 go build -v -o logmonitor -ldflags $(LDFLAGS)
+	CGO_ENABLED=1 go build $(GOTAGS) -v -o logmonitor -ldflags $(LDFLAGS)
 
 build_pi: 
 	GOGCCFLAGS="-fPIC -O4 -Ofast -pipe -march=native -mcpu=arm1176jzf-s -mfpu=vfp -mfloat-abi=hard -s" \
@@ -41,7 +44,7 @@ build_pi:
 			-Wl,-rpath-link=$(RPIROOT)/lib/ \
 			-Wl,-rpath-link=$(RPIROOT)/usr/lib/ \
 			-Wl,-rpath-link=$(RPIROOT)/usr/lib/arm-linux-gnueabihf " \
-		go build -v -o logmonitor-arm -ldflags $(LDFLAGS_PI)
+		go build  $(GOTAGS) -v -o logmonitor-arm -ldflags $(LDFLAGS_PI)
 
 run:
 	#go run -v *.go -log.level debug

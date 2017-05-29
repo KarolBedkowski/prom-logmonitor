@@ -1,3 +1,4 @@
+// +build sdjournal
 //
 // journal.go
 // based on: https://gist.github.com/stuart-warren/240aaa21fa6f2d69457a,
@@ -26,8 +27,19 @@ type SDJournalReader struct {
 	log log.Logger
 }
 
+func init() {
+	MustRegisterReader(&SDJournalReader{})
+}
+
+func (s *SDJournalReader) Match(conf *WorkerConf) (prio int) {
+	if strings.HasPrefix(conf.File, ":sd_journal") {
+		return 99
+	}
+	return -1
+}
+
 // NewSDJournalReader create reader for systemd journal
-func NewSDJournalReader(conf *WorkerConf, l log.Logger) (*SDJournalReader, error) {
+func (s *SDJournalReader) Create(conf *WorkerConf, l log.Logger) (Reader, error) {
 	w := &SDJournalReader{
 		c:   conf,
 		log: l,

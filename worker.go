@@ -10,8 +10,25 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
 	"regexp"
-	"strings"
+	"sync"
 )
+
+type ReaderDef interface {
+	Match(conf *WorkerConf) (prio int)
+	Create(conf *WorkerConf, l log.Logger) (p Reader, err error)
+}
+
+var registeredReaders struct {
+	mu      sync.RWMutex
+	readers []ReaderDef
+}
+
+func MustRegisterReader(r ReaderDef) {
+	registeredReaders.mu.Lock()
+	defer registeredReaders.mu.Unlock()
+
+	registeredReaders.readers = append(registeredReaders.readers, r)
+}
 
 var (
 	lineProcessedCntr = prometheus.NewCounterVec(
@@ -165,13 +182,24 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 
 	var reader Reader
 
-	switch {
-	case strings.HasPrefix(conf.File, ":sd_journal"):
-		reader, err = NewSDJournalReader(conf, w.log)
-	default:
-		reader, err = NewPlainFileReader(conf, w.log)
+	var rd ReaderDef
+	var prio int = -1
+
+	registeredReaders.mu.RLock()
+	defer registeredReaders.mu.RUnlock()
+
+	for _, r := range registeredReaders.readers {
+		if p := r.Match(conf); p >= 0 && p > prio {
+			rd = r
+			prio = p
+		}
 	}
 
+	if rd == nil {
+		return nil, fmt.Errorf("none of reader match configuration for %s", conf.File)
+	}
+
+	reader, err = rd.Create(conf, w.log)
 	if err != nil {
 		return nil, err
 	}

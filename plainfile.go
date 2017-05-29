@@ -20,9 +20,20 @@ type PlainFileReader struct {
 	log log.Logger
 }
 
+func init() {
+	MustRegisterReader(&PlainFileReader{})
+}
+
+func (p *PlainFileReader) Match(conf *WorkerConf) (prio int) {
+	if conf.File[0] == ':' {
+		return -1
+	}
+	return 0
+}
+
 // NewPlainFileReader create new reader for plain files
-func NewPlainFileReader(conf *WorkerConf, l log.Logger) (p *PlainFileReader, err error) {
-	p = &PlainFileReader{
+func (p *PlainFileReader) Create(conf *WorkerConf, l log.Logger) (pfr Reader, err error) {
+	pfr = &PlainFileReader{
 		c:   conf,
 		log: l,
 	}
