@@ -1,3 +1,4 @@
+// +build sdjournal
 //
 // journal.go
 // based on: https://gist.github.com/stuart-warren/240aaa21fa6f2d69457a,
