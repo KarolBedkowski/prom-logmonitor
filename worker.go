@@ -49,6 +49,14 @@ var (
 		},
 		[]string{"file", "metric"},
 	)
+	lineLastProcessed = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "logmonitor",
+			Name:      "line_last_processed_seconds",
+			Help:      "Last line processed unix time",
+		},
+		[]string{"file"},
+	)
 )
 
 func init() {
@@ -56,6 +64,7 @@ func init() {
 	prometheus.MustRegister(lineMatchedCntr)
 	prometheus.MustRegister(lineErrosCntr)
 	prometheus.MustRegister(lineLastMatch)
+	prometheus.MustRegister(lineLastProcessed)
 }
 
 // Filters configure include/exclude patterns
@@ -225,6 +234,7 @@ func (w *Worker) read() {
 		}
 
 		lineProcessedCntr.WithLabelValues(w.c.File).Inc()
+		lineLastProcessed.WithLabelValues(w.c.File).SetToCurrentTime()
 
 		for _, mf := range w.metrics {
 
