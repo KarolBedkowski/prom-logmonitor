@@ -261,6 +261,10 @@ func (w *Worker) read() {
 			continue
 		}
 
+		if line == "" {
+			continue
+		}
+
 		lineProcessedCntr.WithLabelValues(w.c.File).Inc()
 		lineLastProcessed.WithLabelValues(w.c.File).SetToCurrentTime()
 
