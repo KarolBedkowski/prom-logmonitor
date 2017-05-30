@@ -1,9 +1,15 @@
 #
 # Makefile
 #
+
+# Path to raspberry pi mounted root (by sshfs)
+RPIROOT=/home/k/mnt/pi/
+
+# enable sdjournal
+GOTAGS=-tags 'sdjournal'
+
 #
-#
-VERSION=dev
+VERSION=1.0
 REVISION=`git describe --always`
 DATE=`date +%Y%m%d%H%M%S`
 USER=`whoami`
@@ -20,16 +26,6 @@ LDFLAGS_PI="-w -s \
 	-X github.com/prometheus/common/version.BuildDate=$(DATE) \
 	-X github.com/prometheus/common/version.BuildUser=$(USER) \
 	-X github.com/prometheus/common/version.Branch=$(BRANCH)"
-
-RPIROOT=/home/k/mnt/pi/
-
-# enable/disable sdjournal
-GOTAGS=-tags 'sdjournal'
-
-#	-rpath=/home/k/mnt/pi/lib/arm-linux-gnueabihf \
-#	-rpath-link=/home/k/mnt/pi/lib/arm-linux-gnueabihf \
-#	-sysroot=/home/k/mnt/pi/ \
-#	-L/home/k/mnt/pi/lib/arm-linux-gnueabihf/ \
 
 build: 
 	CGO_ENABLED=1 go build $(GOTAGS) -v -o logmonitor -ldflags $(LDFLAGS)

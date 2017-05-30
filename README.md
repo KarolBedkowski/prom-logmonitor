@@ -20,14 +20,22 @@ For SystemD Journal support also require:
 
 ### Local Build & Run
 
+Without systemd:
+
     go build
 
-or
+with systemd:
+
+	go -tags 'sdjournal'
+
+or use Makefile (propably need edit)
 
     make (build | build_pi)
 
 Run:
+
     ./logmonitor
+
 
 See logmonitor.yml for sample config file
 
