@@ -94,9 +94,13 @@ func (c *Configuration) validate() error {
 		if f.Disabled {
 			continue
 		}
+
 		if msg := checkUnknown(f.XUnknown); msg != "" {
 			log.Warnf("unknown fields in worker %d [%s]: %s", i+1, f.Metrics, msg)
 		}
+
+		definedMetris := make(map[string]int)
+
 		for i, m := range f.Metrics {
 			if m.Disabled {
 				continue
@@ -110,6 +114,11 @@ func (c *Configuration) validate() error {
 					log.Warnf("unknown fields in worker %d [%s] patterns %d: %s", i+1, f.Metrics, j+1, msg)
 				}
 			}
+
+			if _, exists := definedMetris[m.Name]; exists {
+				return fmt.Errorf("metric '%s' for '%s' already defined in rule %d", m.Name, f.File, exists)
+			}
+			definedMetris[m.Name] = i + 1
 		}
 	}
 
