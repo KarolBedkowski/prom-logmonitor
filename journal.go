@@ -40,6 +40,7 @@ func (s *SDJournalReader) Match(conf *WorkerConf) (prio int) {
 
 // NewSDJournalReader create reader for systemd journal
 func (s *SDJournalReader) Create(conf *WorkerConf, l log.Logger) (Reader, error) {
+	l.Infof("Monitoring '%s' by SystemD Journal Reader", conf.File)
 	w := &SDJournalReader{
 		c:   conf,
 		log: l,

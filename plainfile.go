@@ -33,6 +33,7 @@ func (p *PlainFileReader) Match(conf *WorkerConf) (prio int) {
 
 // NewPlainFileReader create new reader for plain files
 func (p *PlainFileReader) Create(conf *WorkerConf, l log.Logger) (pfr Reader, err error) {
+	l.Infof("Monitoring '%s' by Plain File Reader", conf.File)
 	pfr = &PlainFileReader{
 		c:   conf,
 		log: l,
