@@ -7,12 +7,28 @@ package main
 
 import (
 	"fmt"
-	"github.com/hpcloud/tail"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
-	"os"
 	"regexp"
+	"sync"
 )
+
+type ReaderDef interface {
+	Match(conf *WorkerConf) (prio int)
+	Create(conf *WorkerConf, l log.Logger) (p Reader, err error)
+}
+
+var registeredReaders struct {
+	mu      sync.RWMutex
+	readers []ReaderDef
+}
+
+func MustRegisterReader(r ReaderDef) {
+	registeredReaders.mu.Lock()
+	defer registeredReaders.mu.Unlock()
+
+	registeredReaders.readers = append(registeredReaders.readers, r)
+}
 
 var (
 	lineProcessedCntr = prometheus.NewCounterVec(
@@ -21,7 +37,7 @@ var (
 			Name:      "lines_processed_total",
 			Help:      "Total number lines processed by worker",
 		},
-		[]string{"metric"},
+		[]string{"file"},
 	)
 
 	lineMatchedCntr = prometheus.NewCounterVec(
@@ -30,7 +46,7 @@ var (
 			Name:      "lines_matched_total",
 			Help:      "Total number lines matched by worker",
 		},
-		[]string{"metric"},
+		[]string{"file", "metric"},
 	)
 
 	lineErrosCntr = prometheus.NewCounterVec(
@@ -39,7 +55,7 @@ var (
 			Name:      "lines_read_errors_total",
 			Help:      "Total number errors occurred while reading lines by worker",
 		},
-		[]string{"metric"},
+		[]string{"file"},
 	)
 
 	lineLastMatch = prometheus.NewGaugeVec(
@@ -48,22 +64,62 @@ var (
 			Name:      "line_last_match_seconds",
 			Help:      "Last line match unix time",
 		},
-		[]string{"metric"},
+		[]string{"file", "metric"},
+	)
+	lineLastProcessed = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "logmonitor",
+			Name:      "line_last_processed_seconds",
+			Help:      "Last line processed unix time",
+		},
+		[]string{"file"},
 	)
 )
 
 func init() {
 	prometheus.MustRegister(lineProcessedCntr)
 	prometheus.MustRegister(lineMatchedCntr)
+	prometheus.MustRegister(lineErrosCntr)
 	prometheus.MustRegister(lineLastMatch)
+	prometheus.MustRegister(lineLastProcessed)
 }
 
-type filters struct {
+// Filters configure include/exclude patterns
+type Filters struct {
 	includes []*regexp.Regexp
 	excludes []*regexp.Regexp
 }
 
-func (f *filters) match(line string) (match bool) {
+// BuildFilters build list of patterns according to configuration
+func BuildFilters(patterns []*Filter) (fs []*Filters, err error) {
+	for _, p := range patterns {
+		f := &Filters{}
+
+		for _, i := range p.Include {
+			r, err := regexp.Compile(i)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"error compile pattern 'include' '%s': %s", i, err)
+			}
+			f.includes = append(f.includes, r)
+		}
+		for _, e := range p.Exclude {
+			r, err := regexp.Compile(e)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"error compile pattern 'exclude' '%s': %s", e, err)
+			}
+			f.excludes = append(f.excludes, r)
+		}
+
+		if len(f.includes) > 0 || len(f.excludes) > 0 {
+			fs = append(fs, f)
+		}
+	}
+	return
+}
+
+func (f *Filters) match(line string) (match bool) {
 	if len(f.includes) == 0 {
 		// accept all lines
 		match = true
@@ -89,119 +145,151 @@ func (f *filters) match(line string) (match bool) {
 	return
 }
 
+// Reader is generic interface for log readers
+type Reader interface {
+	Start() error
+	Read() (line string, err error)
+	Stop() error
+}
+
+type metricFilters struct {
+	name    string
+	filters []*Filters
+}
+
+func (m metricFilters) String() string {
+	return m.name
+}
+
 // Worker watch one file and report matched lines
 type Worker struct {
 	c *WorkerConf
-	t *tail.Tail
 
-	filters []*filters
+	metrics []*metricFilters
 
-	log log.Logger
+	log    log.Logger
+	reader Reader
 }
 
-// NewWorker create new worker from configuration
-func NewWorker(conf *WorkerConf) (*Worker, error) {
-	m := &Worker{
+// NewWorker create new background worker according to configuration
+// Each worker monitor only one file and one file can be monitored only
+// by one worker.
+func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
+	w := &Worker{
 		c:   conf,
-		log: log.With("metric", conf.Metric),
+		log: log.With("file", conf.File),
 	}
 
-	for _, p := range conf.Patterns {
-		f := &filters{}
+	var reader Reader
 
-		for _, i := range p.Include {
-			r, err := regexp.Compile(i)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"error compile pattern 'include' '%s' for '%s' '%s' : %s",
-					i, conf.Metric, conf.File, err)
-			}
-			f.includes = append(f.includes, r)
-		}
-		for _, e := range p.Exclude {
-			r, err := regexp.Compile(e)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"error compile pattern 'exclude' '%s' for '%s' '%s' : %s",
-					e, conf.Metric, conf.File, err)
-			}
-			f.excludes = append(f.excludes, r)
-		}
+	var rd ReaderDef
+	var prio int = -1
 
-		if len(f.includes) > 0 || len(f.excludes) > 0 {
-			m.filters = append(m.filters, f)
-			m.log.Debugf("add filter: %+v", f)
+	registeredReaders.mu.RLock()
+	defer registeredReaders.mu.RUnlock()
+
+	for _, r := range registeredReaders.readers {
+		if p := r.Match(conf); p >= 0 && p > prio {
+			rd = r
+			prio = p
 		}
 	}
 
-	return m, nil
+	if rd == nil {
+		return nil, fmt.Errorf("none of reader match configuration for %s", conf.File)
+	}
+
+	reader, err = rd.Create(conf, w.log)
+	if err != nil {
+		return nil, err
+	}
+	w.reader = reader
+
+	for _, metric := range conf.Metrics {
+		if metric.Disabled {
+			continue
+		}
+		var ftrs []*Filters
+		ftrs, err = BuildFilters(metric.Patterns)
+		if err != nil {
+			return nil, err
+		}
+		w.metrics = append(w.metrics, &metricFilters{
+			name:    metric.Name,
+			filters: ftrs,
+		})
+	}
+
+	return w, nil
 }
 
 // Start worker (reading file)
-func (m *Worker) Start() error {
-	m.log.Debug("start monitoring")
+func (w *Worker) Start() error {
+	if w.reader != nil {
+		w.log.Debug("start monitoring")
 
-	if m.t != nil {
-		return fmt.Errorf("already failing")
+		if err := w.reader.Start(); err != nil {
+			return err
+		}
+
+		go w.read()
+
+		w.log.Info("worker started")
 	}
-
-	t, err := tail.TailFile(m.c.File,
-		tail.Config{
-			Follow:   true,
-			ReOpen:   true,
-			Location: &tail.SeekInfo{Offset: 0, Whence: os.SEEK_END},
-			Logger:   tail.DiscardingLogger,
-		},
-	)
-	if err != nil {
-		return err
-	}
-	m.t = t
-
-	go m.readFile()
-
-	m.log.Info("worker started")
 	return nil
 }
 
-// Metric returns metric name from monitor
-func (m *Worker) Metric() string {
-	return m.c.Metric
+// Filename returns file monitored by worker
+func (w *Worker) Filename() string {
+	return w.c.File
 }
 
 // Stop worker
-func (m *Worker) Stop() {
-	if m.t != nil {
-		m.log.Debug("stop monitoring")
-		m.t.Stop()
+func (w *Worker) Stop() {
+	if w.reader != nil {
+		w.log.Debug("stop monitoring")
+		w.reader.Stop()
 	}
-	m.t = nil
 }
 
-func (m *Worker) readFile() {
-	for line := range m.t.Lines {
-		if line.Err != nil {
-			m.log.Info("read file error:", line.Err.Error())
-			lineErrosCntr.WithLabelValues(m.c.Metric).Inc()
+func (w *Worker) read() {
+	for {
+		line, err := w.reader.Read()
+		if err != nil {
+			w.log.Info("read file error:", err.Error())
+			lineErrosCntr.WithLabelValues(w.c.File).Inc()
 			continue
 		}
-		lineProcessedCntr.WithLabelValues(m.c.Metric).Inc()
-		accepted := false
-		// process file
-		if len(m.filters) == 0 {
-			accepted = true
-		} else {
-			for _, p := range m.filters {
-				if p.match(line.Text) {
-					accepted = true
-					break
+
+		if line == "" {
+			continue
+		}
+
+		lineProcessedCntr.WithLabelValues(w.c.File).Inc()
+		lineLastProcessed.WithLabelValues(w.c.File).SetToCurrentTime()
+
+		for _, mf := range w.metrics {
+
+			//			w.log.Debugf("checking %s", mf)
+
+			accepted := false
+			// process file
+			if len(mf.filters) == 0 {
+				accepted = true
+			} else {
+				for _, p := range mf.filters {
+					if p.match(line) {
+						accepted = true
+						break
+					}
 				}
 			}
-		}
-		if accepted {
-			m.log.Debugf("accepted line '%v'", line.Text)
-			lineMatchedCntr.WithLabelValues(m.c.Metric).Inc()
-			lineLastMatch.WithLabelValues(m.c.Metric).SetToCurrentTime()
+
+			if accepted {
+				w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
+				lineMatchedCntr.WithLabelValues(w.c.File, mf.name).Inc()
+				lineLastMatch.WithLabelValues(w.c.File, mf.name).SetToCurrentTime()
+			}
 		}
 	}
 }

@@ -1,6 +1,7 @@
 # prom-logmonitor
 
 Monitor files for configured patterns and report counters for Prometheus.
+Support monitoring SystemD Journal.
 
 ## Building and running
 
@@ -12,11 +13,29 @@ Monitor files for configured patterns and report counters for Prometheus.
 * gopkg.in/yaml.v2
 * github.com/Merovius/systemd
 
+For SystemD Journal support also require:
+* CGO
+* libsystemd
+
 
 ### Local Build & Run
 
+Without systemd:
+
     go build
+
+with systemd:
+
+	go -tags 'sdjournal'
+
+or use Makefile (propably need edit)
+
+    make (build | build_pi)
+
+Run:
+
     ./logmonitor
+
 
 See logmonitor.yml for sample config file
 
