@@ -94,7 +94,7 @@ func (s *SDJournalReader) Read() (line string, err error) {
 		} else if res == 0 {
 			res = C.sd_journal_wait(s.j, 1000000)
 			if res < 0 {
-				s.log.Warnf("failed to wait for changes: %s", C.GoString(C.strerror(-res)))
+				s.log.Debugf("failed to wait for changes: %s", C.GoString(C.strerror(-res)))
 			}
 			continue
 		}
