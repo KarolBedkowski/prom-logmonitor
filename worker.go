@@ -253,8 +253,11 @@ func (w *Worker) Stop() {
 }
 
 func (w *Worker) read() {
+	var line string
+	var err error
+
 	for {
-		line, err := w.reader.Read()
+		line, err = w.reader.Read()
 		if err != nil {
 			w.log.Info("read file error:", err.Error())
 			lineErrosCntr.WithLabelValues(w.c.File).Inc()

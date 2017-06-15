@@ -88,8 +88,13 @@ func (s *SDJournalReader) Stop() error {
 }
 
 func (s *SDJournalReader) Read() (line string, err error) {
+	var res C.int
+	var data *C.char
+	var length C.size_t
+	var cursor *C.char
+
 	for {
-		if res := C.sd_journal_next(s.j); res < 0 {
+		if res = C.sd_journal_next(s.j); res < 0 {
 			continue
 		} else if res == 0 {
 			res = C.sd_journal_wait(s.j, 1000000)
@@ -99,16 +104,13 @@ func (s *SDJournalReader) Read() (line string, err error) {
 			continue
 		}
 
-		var cursor *C.char
-		if res := C.sd_journal_get_cursor(s.j, &cursor); res < 0 {
+		if res = C.sd_journal_get_cursor(s.j, &cursor); res < 0 {
 			s.log.Warnf("failed to get cursor: %s", C.GoString(C.strerror(-res)))
 			continue
 		}
 
 		C.sd_journal_restart_data(s.j)
 
-		var data *C.char
-		var length C.size_t
 		for C.sd_journal_enumerate_data(s.j, (*unsafe.Pointer)(unsafe.Pointer(&data)), &length) > 0 {
 			data := C.GoString(data)
 			//s.log.Debugf("parts: '%v'", data)
