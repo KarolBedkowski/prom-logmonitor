@@ -42,6 +42,18 @@ build_pi:
 			-Wl,-rpath-link=$(RPIROOT)/usr/lib/arm-linux-gnueabihf " \
 		go build  $(GOTAGS) -v -o logmonitor-arm -ldflags $(LDFLAGS_PI)
 
+build_arm5: 
+	GOGCCFLAGS="-fPIC -O4 -Ofast -pipe -march=native -marm -s" \
+		GOARCH=arm GOARM=5 CGO_ENABLED=1 GOOS=linux \
+		CC=arm-linux-gnueabi-gcc  \
+		CXX=arm-linux-gnueabi-g++ \
+		CGO_LDFLAGS="-L$(RPIROOT)/lib/arm-linux-gnueabihf -lsystemd \
+			-Wl,-rpath-link=$(RPIROOT)/lib/arm-linux-gnueabihf \
+			-Wl,-rpath-link=$(RPIROOT)/lib/ \
+			-Wl,-rpath-link=$(RPIROOT)/usr/lib/ \
+			-Wl,-rpath-link=$(RPIROOT)/usr/lib/arm-linux-gnueabihf " \
+		go build  $(GOTAGS) -v -o logmonitor-arm5 -ldflags $(LDFLAGS_PI)
+
 run:
 	#go run -v *.go -log.level debug
 	CGO_ENABLED="1" go-reload `ls *.go | grep -v _test.go` -log.level debug
