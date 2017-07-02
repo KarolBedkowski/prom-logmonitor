@@ -170,6 +170,8 @@ type Worker struct {
 
 	log    log.Logger
 	reader Reader
+
+	stopping bool
 }
 
 // NewWorker create new background worker according to configuration
@@ -247,6 +249,7 @@ func (w *Worker) Filename() string {
 
 // Stop worker
 func (w *Worker) Stop() {
+	w.stopping = true
 	if w.reader != nil {
 		w.log.Debug("stop monitoring")
 		w.reader.Stop()
@@ -260,6 +263,10 @@ func (w *Worker) read() {
 	for {
 		line, err = w.reader.Read()
 		if err != nil {
+			if w.stopping {
+				return
+			}
+
 			w.log.Info("read file error:", err.Error())
 			lineErrosCntr.WithLabelValues(w.c.File).Inc()
 			continue

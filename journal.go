@@ -94,6 +94,10 @@ func (s *SDJournalReader) Read() (line string, err error) {
 	var cursor *C.char
 
 	for {
+		if s.j == nil {
+			return
+		}
+
 		if res = C.sd_journal_next(s.j); res < 0 {
 			continue
 		} else if res == 0 {
