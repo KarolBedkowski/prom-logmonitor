@@ -6,8 +6,8 @@
 package main
 
 import (
-	"fmt"
 	"github.com/hpcloud/tail"
+	"github.com/pkg/errors"
 	"github.com/prometheus/common/log"
 	"os"
 )
@@ -24,6 +24,8 @@ func init() {
 	MustRegisterReader(&PlainFileReader{})
 }
 
+// Match reader to configuration file.
+// PlainFileReader has very low priority and cannot be used when file start with ":"
 func (p *PlainFileReader) Match(conf *WorkerConf) (prio int) {
 	if conf.File[0] == ':' {
 		return -1
@@ -31,7 +33,7 @@ func (p *PlainFileReader) Match(conf *WorkerConf) (prio int) {
 	return 0
 }
 
-// NewPlainFileReader create new reader for plain files
+// Create new reader for plain files
 func (p *PlainFileReader) Create(conf *WorkerConf, l log.Logger) (pfr Reader, err error) {
 	l.Infof("Monitoring '%s' by Plain File Reader", conf.File)
 	pfr = &PlainFileReader{
@@ -44,7 +46,7 @@ func (p *PlainFileReader) Create(conf *WorkerConf, l log.Logger) (pfr Reader, er
 // Start worker (reading file)
 func (p *PlainFileReader) Start() error {
 	if p.t != nil {
-		return fmt.Errorf("already reading")
+		return errors.Errorf("already reading")
 	}
 
 	t, err := tail.TailFile(p.c.File,
@@ -57,7 +59,7 @@ func (p *PlainFileReader) Start() error {
 	)
 
 	if err != nil {
-		return err
+		return errors.Wrap(err, "tail file error")
 	}
 
 	p.t = t
@@ -85,7 +87,7 @@ func (p *PlainFileReader) Read() (line string, err error) {
 	}
 
 	if l.Err != nil {
-		return "", l.Err
+		return "", errors.Wrap(l.Err, "read line error")
 	}
 
 	return l.Text, nil

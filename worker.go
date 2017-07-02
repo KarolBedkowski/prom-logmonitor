@@ -6,13 +6,14 @@
 package main
 
 import (
-	"fmt"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
 	"regexp"
 	"sync"
 )
 
+// ReaderDef define interface for readers
 type ReaderDef interface {
 	Match(conf *WorkerConf) (prio int)
 	Create(conf *WorkerConf, l log.Logger) (p Reader, err error)
@@ -23,6 +24,7 @@ var registeredReaders struct {
 	readers []ReaderDef
 }
 
+// MustRegisterReader try to register given reader
 func MustRegisterReader(r ReaderDef) {
 	registeredReaders.mu.Lock()
 	defer registeredReaders.mu.Unlock()
@@ -98,16 +100,15 @@ func BuildFilters(patterns []*Filter) (fs []*Filters, err error) {
 		for _, i := range p.Include {
 			r, err := regexp.Compile(i)
 			if err != nil {
-				return nil, fmt.Errorf(
-					"error compile pattern 'include' '%s': %s", i, err)
+				return nil, errors.Wrapf(err, "error compile pattern 'include' '%s'")
 			}
 			f.includes = append(f.includes, r)
 		}
 		for _, e := range p.Exclude {
 			r, err := regexp.Compile(e)
 			if err != nil {
-				return nil, fmt.Errorf(
-					"error compile pattern 'exclude' '%s': %s", e, err)
+				return nil, errors.Wrapf(err,
+					"error compile pattern 'exclude' '%s'", e)
 			}
 			f.excludes = append(f.excludes, r)
 		}
@@ -183,7 +184,7 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 	var reader Reader
 
 	var rd ReaderDef
-	var prio int = -1
+	var prio = -1
 
 	registeredReaders.mu.RLock()
 	defer registeredReaders.mu.RUnlock()
@@ -196,7 +197,7 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 	}
 
 	if rd == nil {
-		return nil, fmt.Errorf("none of reader match configuration for %s", conf.File)
+		return nil, errors.Errorf("none of reader match configuration for %s", conf.File)
 	}
 
 	reader, err = rd.Create(conf, w.log)

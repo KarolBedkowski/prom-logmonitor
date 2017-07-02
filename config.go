@@ -5,7 +5,7 @@
 package main
 
 import (
-	"fmt"
+	"github.com/pkg/errors"
 	"github.com/prometheus/common/log"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
@@ -23,6 +23,7 @@ type (
 		XUnknown map[string]interface{} `yaml:",inline"`
 	}
 
+	// Metric define one metric and group of patterns that launches this metric
 	Metric struct {
 		// Name of metri
 		Name string
@@ -67,7 +68,7 @@ func checkUnknown(m map[string]interface{}) (invalid string) {
 
 func (c *Configuration) validate() error {
 	if len(c.Workers) == 0 {
-		return fmt.Errorf("no files to monitor")
+		return errors.Errorf("no files to monitor")
 	}
 
 	usedFiles := make(map[string]int)
@@ -77,10 +78,10 @@ func (c *Configuration) validate() error {
 			continue
 		}
 		if f.File == "" {
-			return fmt.Errorf("missing 'file' in %+v", f)
+			return errors.Errorf("missing 'file' in %+v", f)
 		}
-		if _, exists := usedFiles[f.File]; exists {
-			return fmt.Errorf("file '%s' already defined in rule %d", f.File, exists)
+		if ruleNum, exists := usedFiles[f.File]; exists {
+			return errors.Errorf("file '%s' already defined in rule %d", f.File, ruleNum)
 		}
 		usedFiles[f.File] = i + 1
 	}
@@ -106,7 +107,7 @@ func (c *Configuration) validate() error {
 				continue
 			}
 			if m.Name == "" {
-				return fmt.Errorf("missing metric name in %+v", m)
+				return errors.Errorf("missing metric name in %+v", m)
 			}
 
 			for j, p := range m.Patterns {
@@ -115,8 +116,8 @@ func (c *Configuration) validate() error {
 				}
 			}
 
-			if _, exists := definedMetris[m.Name]; exists {
-				return fmt.Errorf("metric '%s' for '%s' already defined in rule %d", m.Name, f.File, exists)
+			if ruleNum, exists := definedMetris[m.Name]; exists {
+				return errors.Errorf("metric '%s' for '%s' already defined in rule %d", m.Name, f.File, ruleNum)
 			}
 			definedMetris[m.Name] = i + 1
 		}
@@ -131,15 +132,15 @@ func LoadConfiguration(filename string) (*Configuration, error) {
 	b, err := ioutil.ReadFile(filename)
 
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "read configuration file error")
 	}
 
 	if err = yaml.Unmarshal(b, c); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "configuration unmarshall error")
 	}
 
 	if err = c.validate(); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "configuration validate error")
 	}
 
 	return c, nil

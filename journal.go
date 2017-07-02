@@ -13,7 +13,7 @@ package main
 import "C"
 
 import (
-	"fmt"
+	"github.com/pkg/errors"
 	"github.com/prometheus/common/log"
 	"strings"
 	"unsafe"
@@ -51,7 +51,7 @@ func (s *SDJournalReader) Create(conf *WorkerConf, l log.Logger) (Reader, error)
 // Start worker (reading file)
 func (s *SDJournalReader) Start() error {
 	if s.j != nil {
-		return fmt.Errorf("already reading")
+		return errors.Errorf("already reading")
 	}
 
 	s.j = new(C.struct_sd_journal)
@@ -71,7 +71,7 @@ func (s *SDJournalReader) Start() error {
 	}
 	if res := C.sd_journal_open(&s.j, flag); res < 0 {
 		s.j = nil
-		return fmt.Errorf("journal open error: %s", C.GoString(C.strerror(-res)))
+		return errors.Errorf("journal open error: %s", C.GoString(C.strerror(-res)))
 	}
 
 	C.sd_journal_seek_tail(s.j)
