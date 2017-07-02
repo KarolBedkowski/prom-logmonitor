@@ -22,15 +22,19 @@ workers:
   - file: :sd_journal/system
     metrics:
       - name: sd_journal_system
+    stamp_file: "stamp_sd_system"
 
   - file: :sd_journal/root
     metrics:
       - name: sd_journal_root
+    stamp_file: "stamp_sd_root"
 
   - file: :sd_journal/user
     metrics:
       - name: sd_journal_user
+    stamp_file: "stamp_sd_journal_user"
 
   - file: :sd_journal
     metrics:
       - name: sd_journal
+    stamp_file: "stamp_sd_journal"

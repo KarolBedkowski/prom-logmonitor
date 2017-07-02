@@ -41,6 +41,8 @@ type (
 		Metrics []*Metric
 		// Disabled allow disable some workers
 		Disabled bool
+		// Stamp filename
+		StampFile string `yaml:"stamp_file"`
 
 		XUnknown map[string]interface{} `yaml:",inline"`
 	}
