@@ -74,7 +74,10 @@ func (s *SDJournalReader) Start() error {
 		return errors.Errorf("journal open error: %s", C.GoString(C.strerror(-res)))
 	}
 
-	C.sd_journal_seek_tail(s.j)
+	if res := C.sd_journal_seek_tail(s.j); res < 0 {
+		s.Stop()
+		return errors.Errorf("journal seek tail error: %s", C.GoString(C.strerror(-res)))
+	}
 	return nil
 }
 
@@ -99,12 +102,16 @@ func (s *SDJournalReader) Read() (line string, err error) {
 		}
 
 		if res = C.sd_journal_next(s.j); res < 0 {
+			s.log.Debugf("journal next error: %s", C.GoString(C.strerror(-res)))
 			continue
 		} else if res == 0 {
-			res = C.sd_journal_wait(s.j, 1000000)
-			if res < 0 {
-				s.log.Debugf("failed to wait for changes: %s", C.GoString(C.strerror(-res)))
-			}
+			C.sd_journal_wait(s.j, 1000000)
+			/*
+				res = C.sd_journal_wait(s.j, 1000000)
+				if res < 0 {
+					s.log.Debugf("failed to wait for changes: %s", C.GoString(C.strerror(-res)))
+				}
+			*/
 			continue
 		}
 
@@ -118,12 +125,9 @@ func (s *SDJournalReader) Read() (line string, err error) {
 		for C.sd_journal_enumerate_data(s.j, (*unsafe.Pointer)(unsafe.Pointer(&data)), &length) > 0 {
 			data := C.GoString(data)
 			//s.log.Debugf("parts: '%v'", data)
-			if strings.HasPrefix(data, "MESSAGE=") {
-				parts := strings.Split(data, "=")
-				line := parts[1]
-				if line != "" {
-					return line, nil
-				}
+			if len(data) > 8 && strings.HasPrefix(data, "MESSAGE=") {
+				line = data[8:]
+				return
 			}
 		}
 	}

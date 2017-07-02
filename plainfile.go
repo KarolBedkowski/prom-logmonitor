@@ -77,18 +77,13 @@ func (p *PlainFileReader) Stop() error {
 
 func (p *PlainFileReader) Read() (line string, err error) {
 	if p.t == nil {
-		return "", nil
+		return "", errors.New("file not opened")
 	}
 
-	l, ok := <-p.t.Lines
-
-	if !ok || l == nil {
-		return "", nil
+	if l, ok := <-p.t.Lines; ok {
+		return l.Text, errors.Wrap(l.Err, "read line error")
 	}
 
-	if l.Err != nil {
-		return "", errors.Wrap(l.Err, "read line error")
-	}
-
-	return l.Text, nil
+	// eof
+	return "", nil
 }
