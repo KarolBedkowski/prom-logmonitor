@@ -18,7 +18,10 @@ workers:
         patterns:
           - include:
             - "systemd\\[\\d+\\]"
-  
+      # example use value_pattern; export offset as metric
+      - name: ntp_time_adjust
+        value_pattern: "ntpdate\\[\\d+\\]: adjust time server .+ offset ([-.\\d]+) sec"
+ 
   - file: :sd_journal/system
     metrics:
       - name: sd_journal_system

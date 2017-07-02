@@ -31,6 +31,9 @@ type (
 		Patterns []*Filter
 		// Disabled allow disable some workers
 		Disabled bool
+
+		// ValuePattern define re pattern extracted from line and exposed as metrics.
+		ValuePattern string `yaml:"value_pattern"`
 	}
 
 	// WorkerConf configure one worker

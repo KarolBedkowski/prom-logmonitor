@@ -10,6 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
 	"regexp"
+	"strconv"
 	"sync"
 )
 
@@ -76,6 +77,15 @@ var (
 		},
 		[]string{"file"},
 	)
+
+	valuesExtracted = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "logmonitor",
+			Name:      "value",
+			Help:      "Values extracted from log files",
+		},
+		[]string{"file", "metric"},
+	)
 )
 
 func init() {
@@ -84,6 +94,7 @@ func init() {
 	prometheus.MustRegister(lineErrosCntr)
 	prometheus.MustRegister(lineLastMatch)
 	prometheus.MustRegister(lineLastProcessed)
+	prometheus.MustRegister(valuesExtracted)
 }
 
 // Filters configure include/exclude patterns
@@ -156,6 +167,8 @@ type Reader interface {
 type metricFilters struct {
 	name    string
 	filters []*Filters
+
+	extractPattern *regexp.Regexp
 }
 
 func (m metricFilters) String() string {
@@ -212,15 +225,31 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 		if metric.Disabled {
 			continue
 		}
+
 		var ftrs []*Filters
 		ftrs, err = BuildFilters(metric.Patterns)
 		if err != nil {
 			return nil, err
 		}
-		w.metrics = append(w.metrics, &metricFilters{
+
+		mf := &metricFilters{
 			name:    metric.Name,
 			filters: ftrs,
-		})
+		}
+
+		if metric.ValuePattern != "" {
+			p, err := regexp.Compile(metric.ValuePattern)
+			if err != nil {
+				return nil, errors.Wrapf(err,
+					"error compile extract pattern '%s'", metric.ValuePattern)
+			}
+			mf.extractPattern = p
+			// if not defined filters; use variable pattern re for filtering
+			if len(mf.filters) == 0 {
+				mf.filters = []*Filters{&Filters{includes: []*regexp.Regexp{p}}}
+			}
+		}
+		w.metrics = append(w.metrics, mf)
 	}
 
 	return w, nil
@@ -280,9 +309,7 @@ func (w *Worker) read() {
 		lineLastProcessed.WithLabelValues(w.c.File).SetToCurrentTime()
 
 		for _, mf := range w.metrics {
-
 			//			w.log.Debugf("checking %s", mf)
-
 			accepted := false
 			// process file
 			if len(mf.filters) == 0 {
@@ -300,6 +327,18 @@ func (w *Worker) read() {
 				w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
 				lineMatchedCntr.WithLabelValues(w.c.File, mf.name).Inc()
 				lineLastMatch.WithLabelValues(w.c.File, mf.name).SetToCurrentTime()
+
+				if mf.extractPattern != nil {
+					// extract value from line, convert to float64 and expose
+					m := mf.extractPattern.FindStringSubmatch(line)
+					if len(m) > 1 {
+						if val, err := strconv.ParseFloat(m[1], 66); err == nil {
+							valuesExtracted.WithLabelValues(w.c.File, mf.name).Set(val)
+						} else {
+							w.log.Info("convert '%v' in line '%v' to float failed: %s", m[1], line, err)
+						}
+					}
+				}
 			}
 		}
 	}
