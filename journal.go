@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/common/log"
 	"io/ioutil"
 	"strings"
+	"time"
 	"unsafe"
 )
 
@@ -137,16 +138,14 @@ func (s *SDJournalReader) Read() (line string, err error) {
 		}
 
 		if res = C.sd_journal_next(s.j); res < 0 {
-			s.log.Debugf("journal next error: %s", C.GoString(C.strerror(-res)))
+			s.log.Warnf("journal next error: %s", C.GoString(C.strerror(-res)))
+			time.Sleep(time.Duration(1) * time.Second)
 			continue
 		} else if res == 0 {
-			C.sd_journal_wait(s.j, 1000000)
-			/*
-				res = C.sd_journal_wait(s.j, 1000000)
-				if res < 0 {
-					s.log.Debugf("failed to wait for changes: %s", C.GoString(C.strerror(-res)))
-				}
-			*/
+			res = C.sd_journal_wait(s.j, 1000000)
+			if res < 0 {
+				s.log.Debugf("failed to wait for changes: %s", C.GoString(C.strerror(-res)))
+			}
 			continue
 		}
 

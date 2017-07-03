@@ -175,6 +175,19 @@ func (m metricFilters) String() string {
 	return m.name
 }
 
+func (m *metricFilters) AcceptLine(line string) (accepted bool) {
+	if len(m.filters) == 0 {
+		return true
+	} else {
+		for _, p := range m.filters {
+			if p.match(line) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Worker watch one file and report matched lines
 type Worker struct {
 	c *WorkerConf
@@ -197,7 +210,6 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 	}
 
 	var reader Reader
-
 	var rd ReaderDef
 	var prio = -1
 
@@ -212,7 +224,7 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 	}
 
 	if rd == nil {
-		return nil, errors.Errorf("none of reader match configuration for %s", conf.File)
+		return nil, errors.Errorf("none of readers can be used with for %s", conf.File)
 	}
 
 	reader, err = rd.Create(conf, w.log)
@@ -229,7 +241,7 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 		var ftrs []*Filters
 		ftrs, err = BuildFilters(metric.Patterns)
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrapf(err, "build errors for '%v' error", metric.Patterns)
 		}
 
 		mf := &metricFilters{
@@ -291,11 +303,12 @@ func (w *Worker) read() {
 
 	for {
 		line, err = w.reader.Read()
-		if err != nil {
-			if w.stopping {
-				return
-			}
 
+		if w.stopping {
+			return
+		}
+
+		if err != nil {
 			w.log.Info("read file error:", err.Error())
 			lineErrosCntr.WithLabelValues(w.c.File).Inc()
 			continue
@@ -309,34 +322,22 @@ func (w *Worker) read() {
 		lineLastProcessed.WithLabelValues(w.c.File).SetToCurrentTime()
 
 		for _, mf := range w.metrics {
-			//			w.log.Debugf("checking %s", mf)
-			accepted := false
-			// process file
-			if len(mf.filters) == 0 {
-				accepted = true
-			} else {
-				for _, p := range mf.filters {
-					if p.match(line) {
-						accepted = true
-						break
-					}
-				}
+			if !mf.AcceptLine(line) {
+				continue
 			}
 
-			if accepted {
-				w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
-				lineMatchedCntr.WithLabelValues(w.c.File, mf.name).Inc()
-				lineLastMatch.WithLabelValues(w.c.File, mf.name).SetToCurrentTime()
+			w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
+			lineMatchedCntr.WithLabelValues(w.c.File, mf.name).Inc()
+			lineLastMatch.WithLabelValues(w.c.File, mf.name).SetToCurrentTime()
 
-				if mf.extractPattern != nil {
-					// extract value from line, convert to float64 and expose
-					m := mf.extractPattern.FindStringSubmatch(line)
-					if len(m) > 1 {
-						if val, err := strconv.ParseFloat(m[1], 66); err == nil {
-							valuesExtracted.WithLabelValues(w.c.File, mf.name).Set(val)
-						} else {
-							w.log.Info("convert '%v' in line '%v' to float failed: %s", m[1], line, err)
-						}
+			if mf.extractPattern != nil {
+				// extract value from line, convert to float64 and expose
+				m := mf.extractPattern.FindStringSubmatch(line)
+				if len(m) > 1 {
+					if val, err := strconv.ParseFloat(m[1], 64); err == nil {
+						valuesExtracted.WithLabelValues(w.c.File, mf.name).Set(val)
+					} else {
+						w.log.Info("convert '%v' in line '%v' to float failed: %s", m[1], line, err)
 					}
 				}
 			}
