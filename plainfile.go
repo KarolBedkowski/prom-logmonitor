@@ -44,12 +44,12 @@ func (p *PlainFileReader) Create(conf *WorkerConf, l log.Logger) (pfr Reader, er
 }
 
 // Start worker (reading file)
-func (p *PlainFileReader) Start() error {
+func (p *PlainFileReader) Start() (err error) {
 	if p.t != nil {
 		return errors.Errorf("already reading")
 	}
 
-	t, err := tail.TailFile(p.c.File,
+	p.t, err = tail.TailFile(p.c.File,
 		tail.Config{
 			Follow:   true,
 			ReOpen:   true,
@@ -58,12 +58,7 @@ func (p *PlainFileReader) Start() error {
 		},
 	)
 
-	if err != nil {
-		return errors.Wrap(err, "tail file error")
-	}
-
-	p.t = t
-	return nil
+	return errors.Wrap(err, "open file error")
 }
 
 // Stop reading plain file

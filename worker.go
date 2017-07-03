@@ -147,11 +147,9 @@ func (f *Filters) match(line string) (match bool) {
 	if match {
 		for _, e := range f.excludes {
 			if e.MatchString(line) {
-				match = false
-				return
+				return false
 			}
 		}
-		return
 	}
 
 	return
