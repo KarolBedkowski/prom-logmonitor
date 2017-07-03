@@ -26,6 +26,7 @@ type SDJournalReader struct {
 	c      *WorkerConf
 	j      *C.struct_sd_journal
 	cursor *C.char
+	filter []string
 
 	log log.Logger
 }
@@ -59,8 +60,16 @@ func (s *SDJournalReader) Start() error {
 
 	s.j = new(C.struct_sd_journal)
 
+	var fname, args string
+	if sr := strings.IndexRune(s.c.File, '?'); sr > 0 {
+		fname = s.c.File[:sr]
+		args = s.c.File[sr+1:]
+	} else {
+		fname = s.c.File
+	}
+
 	var flag C.int = C.SD_JOURNAL_LOCAL_ONLY
-	switch s.c.File {
+	switch fname {
 	case ":sd_journal/system":
 		flag = C.SD_JOURNAL_SYSTEM
 	case ":sd_journal/user":
@@ -83,6 +92,10 @@ func (s *SDJournalReader) Start() error {
 			s.Stop()
 			return errors.Errorf("journal seek tail error: %s", C.GoString(C.strerror(-res)))
 		}
+	}
+
+	if args != "" {
+		s.filter = strings.Split(args, "&")
 	}
 
 	return nil
@@ -156,13 +169,28 @@ func (s *SDJournalReader) Read() (line string, err error) {
 
 		C.sd_journal_restart_data(s.j)
 
+		// number of arguments to find in record to accept record
+		argsMissing := len(s.filter)
+
 		for C.sd_journal_enumerate_data(s.j, (*unsafe.Pointer)(unsafe.Pointer(&data)), &length) > 0 {
 			data := C.GoString(data)
 			//s.log.Debugf("parts: '%v'", data)
 			if len(data) > 8 && strings.HasPrefix(data, "MESSAGE=") {
 				line = data[8:]
-				return
 			}
+
+			if argsMissing > 0 {
+				for _, f := range s.filter {
+					if f == data {
+						argsMissing--
+					}
+				}
+			}
+		}
+
+		if argsMissing == 0 {
+			// record accepted
+			return
 		}
 	}
 }

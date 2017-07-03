@@ -41,3 +41,8 @@ workers:
     metrics:
       - name: sd_journal
     stamp_file: "stamp_sd_journal"
+
+  - file: :sd_journal/system?SYSLOG_IDENTIFIER=sudo&_COMM=sudo
+    metrics:
+      - name: sd_journal_system_sudo
+    stamp_file: "stamp_sd_system_sudo"
