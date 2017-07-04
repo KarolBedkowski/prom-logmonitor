@@ -177,9 +177,12 @@ func (s *SDJournalReader) Read() (line string, err error) {
 			//s.log.Debugf("parts: '%v'", data)
 			if len(data) > 8 && strings.HasPrefix(data, "MESSAGE=") {
 				line = data[8:]
-			}
-
-			if argsMissing > 0 {
+				if argsMissing == 0 {
+					// all arguments found and we can stop here
+					return
+				}
+			} else if argsMissing > 0 {
+				// check if this data is on filter list == is required for accept line
 				for _, f := range s.filter {
 					if f == data {
 						argsMissing--

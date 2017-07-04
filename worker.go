@@ -33,6 +33,22 @@ func MustRegisterReader(r ReaderDef) {
 	registeredReaders.readers = append(registeredReaders.readers, r)
 }
 
+func getReaderForConf(conf *WorkerConf) (rd ReaderDef) {
+	registeredReaders.mu.RLock()
+	defer registeredReaders.mu.RUnlock()
+
+	prio := -1
+
+	for _, r := range registeredReaders.readers {
+		if p := r.Match(conf); p >= 0 && p > prio {
+			rd = r
+			prio = p
+		}
+	}
+
+	return
+}
+
 var (
 	lineProcessedCntr = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -115,6 +131,7 @@ func BuildFilters(patterns []*Filter) (fs []*Filters, err error) {
 			}
 			f.includes = append(f.includes, r)
 		}
+
 		for _, e := range p.Exclude {
 			r, err := regexp.Compile(e)
 			if err != nil {
@@ -207,29 +224,14 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 		log: log.With("file", conf.File),
 	}
 
-	var reader Reader
-	var rd ReaderDef
-	var prio = -1
-
-	registeredReaders.mu.RLock()
-	defer registeredReaders.mu.RUnlock()
-
-	for _, r := range registeredReaders.readers {
-		if p := r.Match(conf); p >= 0 && p > prio {
-			rd = r
-			prio = p
-		}
-	}
-
+	rd := getReaderForConf(conf)
 	if rd == nil {
 		return nil, errors.Errorf("none of readers can be used with for %s", conf.File)
 	}
 
-	reader, err = rd.Create(conf, w.log)
-	if err != nil {
-		return nil, err
+	if w.reader, err = rd.Create(conf, w.log); err != nil {
+		return nil, errors.Wrapf(err, "create reader for %s error", conf.File)
 	}
-	w.reader = reader
 
 	for _, metric := range conf.Metrics {
 		if metric.Disabled {
@@ -239,7 +241,7 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 		var ftrs []*Filters
 		ftrs, err = BuildFilters(metric.Patterns)
 		if err != nil {
-			return nil, errors.Wrapf(err, "build errors for '%v' error", metric.Patterns)
+			return nil, errors.Wrapf(err, "build filters for '%v' error", metric.Patterns)
 		}
 
 		mf := &metricFilters{
