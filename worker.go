@@ -193,13 +193,14 @@ func (m metricFilters) String() string {
 func (m *metricFilters) AcceptLine(line string) (accepted bool) {
 	if len(m.filters) == 0 {
 		return true
-	} else {
-		for _, p := range m.filters {
-			if p.match(line) {
-				return true
-			}
+	}
+
+	for _, p := range m.filters {
+		if p.match(line) {
+			return true
 		}
 	}
+
 	return false
 }
 
@@ -326,7 +327,7 @@ func (w *Worker) read() {
 				continue
 			}
 
-			w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
+			//w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
 			lineMatchedCntr.WithLabelValues(w.c.File, mf.name).Inc()
 			lineLastMatch.WithLabelValues(w.c.File, mf.name).SetToCurrentTime()
 

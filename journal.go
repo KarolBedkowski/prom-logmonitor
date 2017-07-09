@@ -155,8 +155,7 @@ func (s *SDJournalReader) Read() (line string, err error) {
 			time.Sleep(time.Duration(1) * time.Second)
 			continue
 		} else if res == 0 {
-			res = C.sd_journal_wait(s.j, 1000000)
-			if res < 0 {
+			if res = C.sd_journal_wait(s.j, 1000000); res < 0 {
 				s.log.Debugf("failed to wait for changes: %s", C.GoString(C.strerror(-res)))
 			}
 			continue
@@ -175,7 +174,7 @@ func (s *SDJournalReader) Read() (line string, err error) {
 		for C.sd_journal_enumerate_data(s.j, (*unsafe.Pointer)(unsafe.Pointer(&data)), &length) > 0 {
 			data := C.GoString(data)
 			//s.log.Debugf("parts: '%v'", data)
-			if len(data) > 8 && strings.HasPrefix(data, "MESSAGE=") {
+			if len(data) > 8 && data[:8] == "MESSAGE=" {
 				line = data[8:]
 				if argsMissing == 0 {
 					// all arguments found and we can stop here
