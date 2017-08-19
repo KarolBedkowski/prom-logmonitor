@@ -23,10 +23,11 @@ import (
 
 // SDJournalReader watch one file and report matched lines
 type SDJournalReader struct {
-	c      *WorkerConf
-	j      *C.struct_sd_journal
-	cursor *C.char
-	filter []string
+	c       *WorkerConf
+	j       *C.struct_sd_journal
+	cursor  *C.char
+	filter  []string
+	closing bool
 
 	log log.Logger
 }
@@ -131,6 +132,8 @@ func (s *SDJournalReader) seekLastPos() (success bool) {
 // Stop worker
 func (s *SDJournalReader) Stop() error {
 	if s.j != nil {
+		s.closing = true
+		time.Sleep(1 * time.Second)
 		C.sd_journal_close(s.j)
 		s.j = nil
 		if s.c.StampFile != "" {
@@ -146,7 +149,7 @@ func (s *SDJournalReader) Read() (line string, err error) {
 	var length C.size_t
 
 	for {
-		if s.j == nil {
+		if s.j == nil || s.closing {
 			return
 		}
 
