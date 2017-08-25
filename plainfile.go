@@ -6,8 +6,8 @@
 package main
 
 import (
-	"fmt"
 	"github.com/hpcloud/tail"
+	"github.com/pkg/errors"
 	"github.com/prometheus/common/log"
 	"os"
 )
@@ -24,6 +24,8 @@ func init() {
 	MustRegisterReader(&PlainFileReader{})
 }
 
+// Match reader to configuration file.
+// PlainFileReader has very low priority and cannot be used when file start with ":"
 func (p *PlainFileReader) Match(conf *WorkerConf) (prio int) {
 	if conf.File[0] == ':' {
 		return -1
@@ -31,7 +33,7 @@ func (p *PlainFileReader) Match(conf *WorkerConf) (prio int) {
 	return 0
 }
 
-// NewPlainFileReader create new reader for plain files
+// Create new reader for plain files
 func (p *PlainFileReader) Create(conf *WorkerConf, l log.Logger) (pfr Reader, err error) {
 	l.Infof("Monitoring '%s' by Plain File Reader", conf.File)
 	pfr = &PlainFileReader{
@@ -42,26 +44,23 @@ func (p *PlainFileReader) Create(conf *WorkerConf, l log.Logger) (pfr Reader, er
 }
 
 // Start worker (reading file)
-func (p *PlainFileReader) Start() error {
+func (p *PlainFileReader) Start() (err error) {
 	if p.t != nil {
-		return fmt.Errorf("already reading")
+		return errors.Errorf("already reading")
 	}
 
-	t, err := tail.TailFile(p.c.File,
+	p.t, err = tail.TailFile(p.c.File,
 		tail.Config{
 			Follow:   true,
 			ReOpen:   true,
 			Location: &tail.SeekInfo{Offset: 0, Whence: os.SEEK_END},
 			Logger:   tail.DiscardingLogger,
+			Poll:     p.c.Options["poll"] == "yes",
+			Pipe:     p.c.Options["pipe"] == "yes",
 		},
 	)
 
-	if err != nil {
-		return err
-	}
-
-	p.t = t
-	return nil
+	return errors.Wrap(err, "open file error")
 }
 
 // Stop reading plain file
@@ -75,18 +74,13 @@ func (p *PlainFileReader) Stop() error {
 
 func (p *PlainFileReader) Read() (line string, err error) {
 	if p.t == nil {
-		return "", nil
+		return "", errors.New("file not opened")
 	}
 
-	l, ok := <-p.t.Lines
-
-	if !ok || l == nil {
-		return "", nil
+	if l, ok := <-p.t.Lines; ok {
+		return l.Text, errors.Wrap(l.Err, "read line error")
 	}
 
-	if l.Err != nil {
-		return "", l.Err
-	}
-
-	return l.Text, nil
+	// eof
+	return "", nil
 }

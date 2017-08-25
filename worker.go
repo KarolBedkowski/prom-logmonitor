@@ -6,13 +6,15 @@
 package main
 
 import (
-	"fmt"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
 	"regexp"
+	"strconv"
 	"sync"
 )
 
+// ReaderDef define interface for readers
 type ReaderDef interface {
 	Match(conf *WorkerConf) (prio int)
 	Create(conf *WorkerConf, l log.Logger) (p Reader, err error)
@@ -23,11 +25,28 @@ var registeredReaders struct {
 	readers []ReaderDef
 }
 
+// MustRegisterReader try to register given reader
 func MustRegisterReader(r ReaderDef) {
 	registeredReaders.mu.Lock()
 	defer registeredReaders.mu.Unlock()
 
 	registeredReaders.readers = append(registeredReaders.readers, r)
+}
+
+func getReaderForConf(conf *WorkerConf) (rd ReaderDef) {
+	registeredReaders.mu.RLock()
+	defer registeredReaders.mu.RUnlock()
+
+	prio := -1
+
+	for _, r := range registeredReaders.readers {
+		if p := r.Match(conf); p >= 0 && p > prio {
+			rd = r
+			prio = p
+		}
+	}
+
+	return
 }
 
 var (
@@ -74,6 +93,15 @@ var (
 		},
 		[]string{"file"},
 	)
+
+	valuesExtracted = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "logmonitor",
+			Name:      "value",
+			Help:      "Values extracted from log files",
+		},
+		[]string{"file", "metric"},
+	)
 )
 
 func init() {
@@ -82,6 +110,7 @@ func init() {
 	prometheus.MustRegister(lineErrosCntr)
 	prometheus.MustRegister(lineLastMatch)
 	prometheus.MustRegister(lineLastProcessed)
+	prometheus.MustRegister(valuesExtracted)
 }
 
 // Filters configure include/exclude patterns
@@ -98,16 +127,16 @@ func BuildFilters(patterns []*Filter) (fs []*Filters, err error) {
 		for _, i := range p.Include {
 			r, err := regexp.Compile(i)
 			if err != nil {
-				return nil, fmt.Errorf(
-					"error compile pattern 'include' '%s': %s", i, err)
+				return nil, errors.Wrapf(err, "error compile pattern 'include' '%s'")
 			}
 			f.includes = append(f.includes, r)
 		}
+
 		for _, e := range p.Exclude {
 			r, err := regexp.Compile(e)
 			if err != nil {
-				return nil, fmt.Errorf(
-					"error compile pattern 'exclude' '%s': %s", e, err)
+				return nil, errors.Wrapf(err,
+					"error compile pattern 'exclude' '%s'", e)
 			}
 			f.excludes = append(f.excludes, r)
 		}
@@ -135,11 +164,9 @@ func (f *Filters) match(line string) (match bool) {
 	if match {
 		for _, e := range f.excludes {
 			if e.MatchString(line) {
-				match = false
-				return
+				return false
 			}
 		}
-		return
 	}
 
 	return
@@ -155,10 +182,26 @@ type Reader interface {
 type metricFilters struct {
 	name    string
 	filters []*Filters
+
+	extractPattern *regexp.Regexp
 }
 
 func (m metricFilters) String() string {
 	return m.name
+}
+
+func (m *metricFilters) AcceptLine(line string) (accepted bool) {
+	if len(m.filters) == 0 {
+		return true
+	}
+
+	for _, p := range m.filters {
+		if p.match(line) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Worker watch one file and report matched lines
@@ -169,6 +212,8 @@ type Worker struct {
 
 	log    log.Logger
 	reader Reader
+
+	stopping bool
 }
 
 // NewWorker create new background worker according to configuration
@@ -180,44 +225,44 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 		log: log.With("file", conf.File),
 	}
 
-	var reader Reader
-
-	var rd ReaderDef
-	var prio int = -1
-
-	registeredReaders.mu.RLock()
-	defer registeredReaders.mu.RUnlock()
-
-	for _, r := range registeredReaders.readers {
-		if p := r.Match(conf); p >= 0 && p > prio {
-			rd = r
-			prio = p
-		}
-	}
-
+	rd := getReaderForConf(conf)
 	if rd == nil {
-		return nil, fmt.Errorf("none of reader match configuration for %s", conf.File)
+		return nil, errors.Errorf("none of readers can be used with for %s", conf.File)
 	}
 
-	reader, err = rd.Create(conf, w.log)
-	if err != nil {
-		return nil, err
+	if w.reader, err = rd.Create(conf, w.log); err != nil {
+		return nil, errors.Wrapf(err, "create reader for %s error", conf.File)
 	}
-	w.reader = reader
 
 	for _, metric := range conf.Metrics {
 		if metric.Disabled {
 			continue
 		}
+
 		var ftrs []*Filters
 		ftrs, err = BuildFilters(metric.Patterns)
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrapf(err, "build filters for '%v' error", metric.Patterns)
 		}
-		w.metrics = append(w.metrics, &metricFilters{
+
+		mf := &metricFilters{
 			name:    metric.Name,
 			filters: ftrs,
-		})
+		}
+
+		if metric.ValuePattern != "" {
+			p, err := regexp.Compile(metric.ValuePattern)
+			if err != nil {
+				return nil, errors.Wrapf(err,
+					"error compile extract pattern '%s'", metric.ValuePattern)
+			}
+			mf.extractPattern = p
+			// if not defined filters; use variable pattern re for filtering
+			if len(mf.filters) == 0 {
+				mf.filters = []*Filters{&Filters{includes: []*regexp.Regexp{p}}}
+			}
+		}
+		w.metrics = append(w.metrics, mf)
 	}
 
 	return w, nil
@@ -246,6 +291,7 @@ func (w *Worker) Filename() string {
 
 // Stop worker
 func (w *Worker) Stop() {
+	w.stopping = true
 	if w.reader != nil {
 		w.log.Debug("stop monitoring")
 		w.reader.Stop()
@@ -253,8 +299,16 @@ func (w *Worker) Stop() {
 }
 
 func (w *Worker) read() {
+	var line string
+	var err error
+
 	for {
-		line, err := w.reader.Read()
+		line, err = w.reader.Read()
+
+		if w.stopping {
+			return
+		}
+
 		if err != nil {
 			w.log.Info("read file error:", err.Error())
 			lineErrosCntr.WithLabelValues(w.c.File).Inc()
@@ -269,26 +323,24 @@ func (w *Worker) read() {
 		lineLastProcessed.WithLabelValues(w.c.File).SetToCurrentTime()
 
 		for _, mf := range w.metrics {
-
-			//			w.log.Debugf("checking %s", mf)
-
-			accepted := false
-			// process file
-			if len(mf.filters) == 0 {
-				accepted = true
-			} else {
-				for _, p := range mf.filters {
-					if p.match(line) {
-						accepted = true
-						break
-					}
-				}
+			if !mf.AcceptLine(line) {
+				continue
 			}
 
-			if accepted {
-				w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
-				lineMatchedCntr.WithLabelValues(w.c.File, mf.name).Inc()
-				lineLastMatch.WithLabelValues(w.c.File, mf.name).SetToCurrentTime()
+			//w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
+			lineMatchedCntr.WithLabelValues(w.c.File, mf.name).Inc()
+			lineLastMatch.WithLabelValues(w.c.File, mf.name).SetToCurrentTime()
+
+			if mf.extractPattern != nil {
+				// extract value from line, convert to float64 and expose
+				m := mf.extractPattern.FindStringSubmatch(line)
+				if len(m) > 1 {
+					if val, err := strconv.ParseFloat(m[1], 64); err == nil {
+						valuesExtracted.WithLabelValues(w.c.File, mf.name).Set(val)
+					} else {
+						w.log.Info("convert '%v' in line '%v' to float failed: %s", m[1], line, err)
+					}
+				}
 			}
 		}
 	}

@@ -13,16 +13,21 @@ package main
 import "C"
 
 import (
-	"fmt"
+	"github.com/pkg/errors"
 	"github.com/prometheus/common/log"
+	"io/ioutil"
 	"strings"
+	"time"
 	"unsafe"
 )
 
 // SDJournalReader watch one file and report matched lines
 type SDJournalReader struct {
-	c *WorkerConf
-	j *C.struct_sd_journal
+	c       *WorkerConf
+	j       *C.struct_sd_journal
+	cursor  *C.char
+	filter  []string
+	closing bool
 
 	log log.Logger
 }
@@ -51,13 +56,21 @@ func (s *SDJournalReader) Create(conf *WorkerConf, l log.Logger) (Reader, error)
 // Start worker (reading file)
 func (s *SDJournalReader) Start() error {
 	if s.j != nil {
-		return fmt.Errorf("already reading")
+		return errors.Errorf("already reading")
 	}
 
 	s.j = new(C.struct_sd_journal)
 
+	var fname, args string
+	if sr := strings.IndexRune(s.c.File, '?'); sr > 0 {
+		fname = s.c.File[:sr]
+		args = s.c.File[sr+1:]
+	} else {
+		fname = s.c.File
+	}
+
 	var flag C.int = C.SD_JOURNAL_LOCAL_ONLY
-	switch s.c.File {
+	switch fname {
 	case ":sd_journal/system":
 		flag = C.SD_JOURNAL_SYSTEM
 	case ":sd_journal/user":
@@ -71,54 +84,118 @@ func (s *SDJournalReader) Start() error {
 	}
 	if res := C.sd_journal_open(&s.j, flag); res < 0 {
 		s.j = nil
-		return fmt.Errorf("journal open error: %s", C.GoString(C.strerror(-res)))
+		return errors.Errorf("journal open error: %s", C.GoString(C.strerror(-res)))
 	}
 
-	C.sd_journal_seek_tail(s.j)
+	if s.c.StampFile == "" || !s.seekLastPos() {
+		// move to end
+		if res := C.sd_journal_seek_tail(s.j); res < 0 {
+			s.Stop()
+			return errors.Errorf("journal seek tail error: %s", C.GoString(C.strerror(-res)))
+		}
+	}
+
+	if args != "" {
+		s.filter = strings.Split(args, "&")
+	}
+
 	return nil
+}
+
+func (s *SDJournalReader) seekLastPos() (success bool) {
+	s.log.Debugf("seek to last cursor; file: %s", s.c.StampFile)
+	stamp, err := ioutil.ReadFile(s.c.StampFile)
+	if err != nil {
+		s.log.Infof("open stamp file %s error: %s", s.c.StampFile, err)
+		return false
+	}
+
+	if len(stamp) == 0 {
+		return
+	}
+
+	s.cursor = C.CString(string(stamp))
+	if res := C.sd_journal_seek_cursor(s.j, s.cursor); res < 0 {
+		s.log.Warnf("failed to seek last cursor: %s", C.GoString(C.strerror(-res)))
+		return
+	}
+
+	if res := C.sd_journal_next_skip(s.j, 1); res < 0 {
+		s.log.Warnf("failed to seek next: %s", C.GoString(C.strerror(-res)))
+		return
+	}
+
+	s.log.Debugf("seek to last cursor success")
+	return true
 }
 
 // Stop worker
 func (s *SDJournalReader) Stop() error {
 	if s.j != nil {
+		s.closing = true
+		time.Sleep(1 * time.Second)
 		C.sd_journal_close(s.j)
 		s.j = nil
+		if s.c.StampFile != "" {
+			ioutil.WriteFile(s.c.StampFile, []byte(C.GoString(s.cursor)), 0644)
+		}
 	}
 	return nil
 }
 
 func (s *SDJournalReader) Read() (line string, err error) {
+	var res C.int
+	var data *C.char
+	var length C.size_t
+
 	for {
-		if res := C.sd_journal_next(s.j); res < 0 {
+		if s.j == nil || s.closing {
+			return
+		}
+
+		if res = C.sd_journal_next(s.j); res < 0 {
+			s.log.Warnf("journal next error: %s", C.GoString(C.strerror(-res)))
+			time.Sleep(time.Duration(1) * time.Second)
 			continue
 		} else if res == 0 {
-			res = C.sd_journal_wait(s.j, 1000000)
-			if res < 0 {
-				s.log.Warnf("failed to wait for changes: %s", C.GoString(C.strerror(-res)))
+			if res = C.sd_journal_wait(s.j, 1000000); res < 0 {
+				s.log.Debugf("failed to wait for changes: %s", C.GoString(C.strerror(-res)))
 			}
 			continue
 		}
 
-		var cursor *C.char
-		if res := C.sd_journal_get_cursor(s.j, &cursor); res < 0 {
+		if res = C.sd_journal_get_cursor(s.j, &s.cursor); res < 0 {
 			s.log.Warnf("failed to get cursor: %s", C.GoString(C.strerror(-res)))
 			continue
 		}
 
 		C.sd_journal_restart_data(s.j)
 
-		var data *C.char
-		var length C.size_t
+		// number of arguments to find in record to accept record
+		argsMissing := len(s.filter)
+
 		for C.sd_journal_enumerate_data(s.j, (*unsafe.Pointer)(unsafe.Pointer(&data)), &length) > 0 {
 			data := C.GoString(data)
 			//s.log.Debugf("parts: '%v'", data)
-			if strings.HasPrefix(data, "MESSAGE=") {
-				parts := strings.Split(data, "=")
-				line := parts[1]
-				if line != "" {
-					return line, nil
+			if len(data) > 8 && data[:8] == "MESSAGE=" {
+				line = data[8:]
+				if argsMissing == 0 {
+					// all arguments found and we can stop here
+					return
+				}
+			} else if argsMissing > 0 {
+				// check if this data is on filter list == is required for accept line
+				for _, f := range s.filter {
+					if f == data {
+						argsMissing--
+					}
 				}
 			}
+		}
+
+		if argsMissing == 0 {
+			// record accepted
+			return
 		}
 	}
 }

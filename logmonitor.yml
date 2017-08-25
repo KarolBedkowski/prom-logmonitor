@@ -13,24 +13,41 @@ workers:
             - ".*ttty.*"
   
   - file: /var/log/syslog
+    options:
+      # poll file instead of use inotify (yes/no)
+      poll: yes
+      # file is named pipe (yes/no)
+      pipe: no
     metrics:
       - name: syslog_systemd
         patterns:
           - include:
             - "systemd\\[\\d+\\]"
-  
+      # example use value_pattern; export offset as metric
+      - name: ntp_time_adjust
+        value_pattern: "ntpdate\\[\\d+\\]: adjust time server .+ offset ([-.\\d]+) sec"
+ 
   - file: :sd_journal/system
     metrics:
       - name: sd_journal_system
+    stamp_file: "stamp_sd_system"
 
   - file: :sd_journal/root
     metrics:
       - name: sd_journal_root
+    stamp_file: "stamp_sd_root"
 
   - file: :sd_journal/user
     metrics:
       - name: sd_journal_user
+    stamp_file: "stamp_sd_journal_user"
 
   - file: :sd_journal
     metrics:
       - name: sd_journal
+    stamp_file: "stamp_sd_journal"
+
+  - file: :sd_journal/system?SYSLOG_IDENTIFIER=sudo&_COMM=sudo
+    metrics:
+      - name: sd_journal_system_sudo
+    stamp_file: "stamp_sd_system_sudo"
