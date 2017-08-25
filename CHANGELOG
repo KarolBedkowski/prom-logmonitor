@@ -1,2 +1,8 @@
+v1.1 2017-08-25
+* journal: remeber last read position
+* journal: allow select records to process by required fields
+* plaintext: allow to pull, read pipe (configuration option)
+* bugfix
+
 v1.0 2017-05-30
 * init
