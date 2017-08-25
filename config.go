@@ -46,6 +46,8 @@ type (
 		Disabled bool
 		// Stamp filename
 		StampFile string `yaml:"stamp_file"`
+		// options for worker
+		Options map[string]string `yaml:"options"`
 
 		XUnknown map[string]interface{} `yaml:",inline"`
 	}

@@ -55,6 +55,8 @@ func (p *PlainFileReader) Start() (err error) {
 			ReOpen:   true,
 			Location: &tail.SeekInfo{Offset: 0, Whence: os.SEEK_END},
 			Logger:   tail.DiscardingLogger,
+			Poll:     p.c.Options["poll"] == "yes",
+			Pipe:     p.c.Options["pipe"] == "yes",
 		},
 	)
 
