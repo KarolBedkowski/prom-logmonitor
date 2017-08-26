@@ -11,6 +11,9 @@ workers:
             - "hpet"
             exclude:
             - ".*ttty.*"
+        labels:
+          app: aaa
+          test: yes
   
   - file: /var/log/syslog
     options:
@@ -26,6 +29,9 @@ workers:
       # example use value_pattern; export offset as metric
       - name: ntp_time_adjust
         value_pattern: "ntpdate\\[\\d+\\]: adjust time server .+ offset ([-.\\d]+) sec"
+        labels:
+          app: ntp
+          warn: yes
  
   - file: :sd_journal/system
     metrics:

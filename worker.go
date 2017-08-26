@@ -59,15 +59,6 @@ var (
 		[]string{"file"},
 	)
 
-	lineMatchedCntr = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "logmonitor",
-			Name:      "lines_matched_total",
-			Help:      "Total number lines matched by worker",
-		},
-		[]string{"file", "metric"},
-	)
-
 	lineErrosCntr = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "logmonitor",
@@ -77,14 +68,6 @@ var (
 		[]string{"file"},
 	)
 
-	lineLastMatch = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "logmonitor",
-			Name:      "line_last_match_seconds",
-			Help:      "Last line match unix time",
-		},
-		[]string{"file", "metric"},
-	)
 	lineLastProcessed = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "logmonitor",
@@ -94,22 +77,60 @@ var (
 		[]string{"file"},
 	)
 
+	lineMatchedCntr *prometheus.CounterVec
+	lineLastMatch   *prometheus.GaugeVec
+	valuesExtracted *prometheus.GaugeVec
+)
+
+func init() {
+	prometheus.MustRegister(lineProcessedCntr)
+	prometheus.MustRegister(lineLastProcessed)
+	prometheus.MustRegister(lineErrosCntr)
+}
+
+func initMetrics(c *Configuration) {
+
+	if lineMatchedCntr != nil {
+		prometheus.Unregister(lineMatchedCntr)
+	}
+
+	lineMatchedCntr = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "logmonitor",
+			Name:      "lines_matched_total",
+			Help:      "Total number lines matched by worker",
+		},
+		append([]string{"file", "metric"}, c.StaticLabelsNames...),
+	)
+
+	if lineLastMatch != nil {
+		prometheus.Unregister(lineLastMatch)
+	}
+
+	lineLastMatch = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "logmonitor",
+			Name:      "line_last_match_seconds",
+			Help:      "Last line match unix time",
+		},
+		append([]string{"file", "metric"}, c.StaticLabelsNames...),
+	)
+
+	if valuesExtracted != nil {
+		prometheus.Unregister(valuesExtracted)
+	}
+
 	valuesExtracted = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "logmonitor",
 			Name:      "value",
 			Help:      "Values extracted from log files",
 		},
-		[]string{"file", "metric"},
+		append([]string{"file", "metric"}, c.StaticLabelsNames...),
 	)
-)
 
-func init() {
-	prometheus.MustRegister(lineProcessedCntr)
 	prometheus.MustRegister(lineMatchedCntr)
-	prometheus.MustRegister(lineErrosCntr)
 	prometheus.MustRegister(lineLastMatch)
-	prometheus.MustRegister(lineLastProcessed)
 	prometheus.MustRegister(valuesExtracted)
 }
 
@@ -182,6 +203,7 @@ type Reader interface {
 type metricFilters struct {
 	name    string
 	filters []*Filters
+	labels  []string
 
 	extractPattern *regexp.Regexp
 }
@@ -248,6 +270,7 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 		mf := &metricFilters{
 			name:    metric.Name,
 			filters: ftrs,
+			labels:  metric.StaticLabels,
 		}
 
 		if metric.ValuePattern != "" {
@@ -327,16 +350,18 @@ func (w *Worker) read() {
 				continue
 			}
 
+			labels := append([]string{w.c.File, mf.name}, mf.labels...)
+
 			//w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
-			lineMatchedCntr.WithLabelValues(w.c.File, mf.name).Inc()
-			lineLastMatch.WithLabelValues(w.c.File, mf.name).SetToCurrentTime()
+			lineMatchedCntr.WithLabelValues(labels...).Inc()
+			lineLastMatch.WithLabelValues(labels...).SetToCurrentTime()
 
 			if mf.extractPattern != nil {
 				// extract value from line, convert to float64 and expose
 				m := mf.extractPattern.FindStringSubmatch(line)
 				if len(m) > 1 {
 					if val, err := strconv.ParseFloat(m[1], 64); err == nil {
-						valuesExtracted.WithLabelValues(w.c.File, mf.name).Set(val)
+						valuesExtracted.WithLabelValues(labels...).Set(val)
 					} else {
 						w.log.Info("convert '%v' in line '%v' to float failed: %s", m[1], line, err)
 					}

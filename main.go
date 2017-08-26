@@ -63,6 +63,8 @@ func main() {
 		return
 	}
 
+	initMetrics(c)
+
 	http.Handle("/metrics", promhttp.Handler())
 
 	monitors := createWorkers(c)
@@ -81,6 +83,7 @@ func main() {
 				for _, m := range monitors {
 					m.Stop()
 				}
+				initMetrics(c)
 				monitors = createWorkers(c)
 
 				log.Info("configuration reloaded")

@@ -32,8 +32,12 @@ type (
 		// Disabled allow disable some workers
 		Disabled bool
 
+		Labels map[string]string
+
 		// ValuePattern define re pattern extracted from line and exposed as metrics.
 		ValuePattern string `yaml:"value_pattern"`
+
+		StaticLabels []string `yaml:"-"`
 	}
 
 	// WorkerConf configure one worker
@@ -58,6 +62,8 @@ type (
 		Workers []*WorkerConf
 
 		XUnknown map[string]interface{} `yaml:",inline"`
+
+		StaticLabelsNames []string `yaml:"-"`
 	}
 )
 
@@ -133,6 +139,46 @@ func (c *Configuration) validate() error {
 	return nil
 }
 
+// prepareLabels look for configured labels and create one, common list of static labels
+func (c *Configuration) prepareLabels() {
+	labelsMaps := make(map[string]int, 0)
+	labelsList := make([]string, 0)
+
+	// find all labels
+	for _, f := range c.Workers {
+		if f.Disabled {
+			continue
+		}
+
+		for _, m := range f.Metrics {
+			for k := range m.Labels {
+				if _, ok := labelsMaps[k]; !ok {
+					labelsMaps[k] = len(labelsList)
+					labelsList = append(labelsList, k)
+				}
+			}
+		}
+	}
+
+	// prepare static labels, not used labels gets values ""
+	for _, f := range c.Workers {
+		if f.Disabled {
+			continue
+		}
+
+		for _, m := range f.Metrics {
+			m.StaticLabels = make([]string, len(labelsList), len(labelsList))
+			for k, v := range m.Labels {
+				labIdx := labelsMaps[k]
+				m.StaticLabels[labIdx] = v
+			}
+		}
+	}
+
+	c.StaticLabelsNames = labelsList
+	log.Debugf("static labels: %#v", labelsList)
+}
+
 // LoadConfiguration from `filename`
 func LoadConfiguration(filename string) (*Configuration, error) {
 	c := &Configuration{}
@@ -149,6 +195,8 @@ func LoadConfiguration(filename string) (*Configuration, error) {
 	if err = c.validate(); err != nil {
 		return nil, errors.Wrap(err, "configuration validate error")
 	}
+
+	c.prepareLabels()
 
 	return c, nil
 }
