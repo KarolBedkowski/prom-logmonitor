@@ -43,9 +43,7 @@ See logmonitor.yml for sample config file
 ### Options
 
 * `-config.file string` Path to configuration file. (default `eventdb.yml`)
-* `-log.format value` Set the log target and format. Example:
-  `logger:syslog?appname=bob&local=7` or `logger:stdout?json=true`
-  (default `logger:stderr`)
+* `-log.file` Save logd to given file.
 * `-log.level value` Only log messages with the given severity or above. Valid
   levels: [debug, info, warn, error, fatal] (default `info`)
 * `-version` Print version information.
