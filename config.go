@@ -6,7 +6,6 @@ package main
 
 import (
 	"github.com/pkg/errors"
-	"github.com/prometheus/common/log"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"regexp"

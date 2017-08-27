@@ -8,7 +8,6 @@ package main
 import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/common/log"
 	"regexp"
 	"strconv"
 	"sync"
@@ -17,7 +16,7 @@ import (
 // ReaderDef define interface for readers
 type ReaderDef interface {
 	Match(conf *WorkerConf) (prio int)
-	Create(conf *WorkerConf, l log.Logger) (p Reader, err error)
+	Create(conf *WorkerConf, l logger) (p Reader, err error)
 }
 
 var registeredReaders struct {
@@ -193,7 +192,7 @@ type Worker struct {
 
 	metrics []*metricFilters
 
-	log    log.Logger
+	log    logger
 	reader Reader
 
 	stopping bool

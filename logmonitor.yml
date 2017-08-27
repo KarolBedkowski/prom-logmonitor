@@ -18,9 +18,9 @@ workers:
   - file: /var/log/syslog
     options:
       # poll file instead of use inotify (yes/no)
-      poll: yes
+      #poll: yes
       # file is named pipe (yes/no)
-      pipe: no
+      #pipe: no
     metrics:
       - name: syslog_systemd
         patterns:
@@ -57,3 +57,4 @@ workers:
     metrics:
       - name: sd_journal_system_sudo
     stamp_file: "stamp_sd_system_sudo"
+
