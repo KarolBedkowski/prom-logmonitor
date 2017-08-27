@@ -22,16 +22,15 @@ func newMetricsGroup(metric string, labels []string) metricsGroup {
 	mg := metricsGroup{
 		lineMatchedCntr: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: metric,
-				Name:      "lines_matched_total",
-				Help:      "Total number lines matched by worker",
+				Name: metric,
+				Help: "Total number lines matched by worker",
 			},
 			labels,
 		),
 		lineLastMatch: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: metric,
-				Name:      "line_last_match_seconds",
+				Name:      "last_match_seconds",
 				Help:      "Last line match unix time",
 			},
 			labels,
