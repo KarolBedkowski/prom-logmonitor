@@ -18,6 +18,37 @@ type metricsGroup struct {
 	valuesExtracted *prometheus.GaugeVec
 }
 
+func newMetricsGroup(metric string, labels []string) metricsGroup {
+	mg := metricsGroup{
+		lineMatchedCntr: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: metric,
+				Name:      "lines_matched_total",
+				Help:      "Total number lines matched by worker",
+			},
+			labels,
+		),
+		lineLastMatch: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: metric,
+				Name:      "line_last_match_seconds",
+				Help:      "Last line match unix time",
+			},
+			labels,
+		),
+		valuesExtracted: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: metric,
+				Name:      "value",
+				Help:      "Values extracted from log files",
+			},
+			labels,
+		),
+	}
+	mg.register()
+	return mg
+}
+
 func (m *metricsGroup) register() {
 	prometheus.Register(m.lineMatchedCntr)
 	prometheus.Register(m.lineLastMatch)
@@ -30,44 +61,20 @@ func (m *metricsGroup) unregister() {
 	prometheus.Unregister(m.valuesExtracted)
 }
 
+// MetricCollection group prometheus collectors for configured metrics
 type MetricCollection struct {
 	metrics map[string]metricsGroup
 }
 
+// NewMetricCollection create empty MetricCollection
 func NewMetricCollection() *MetricCollection {
 	return &MetricCollection{
 		metrics: make(map[string]metricsGroup),
 	}
 }
 
-func getMetricsLabes(c *Configuration) map[string][]string {
-	metricsLabels := make(map[string][]string)
-
-	for _, f := range c.Workers {
-		if f.Disabled {
-			continue
-		}
-
-		for _, cm := range f.Metrics {
-			if _, exists := metricsLabels[cm.Name]; exists {
-				continue
-			}
-
-			var labels []string
-			for k := range cm.Labels {
-				labels = append(labels, k)
-			}
-			sort.Strings(labels)
-			metricsLabels[cm.Name] = labels
-		}
-	}
-
-	return metricsLabels
-}
-
+// RegisterMetrics create & register collectors according to configuration
 func (m *MetricCollection) RegisterMetrics(c *Configuration) {
-	labels := getMetricsLabes(c)
-
 	for _, f := range c.Workers {
 		if f.Disabled {
 			continue
@@ -77,44 +84,25 @@ func (m *MetricCollection) RegisterMetrics(c *Configuration) {
 			if _, exists := m.metrics[cm.Name]; exists {
 				continue
 			}
-			l := []string{"file"}
-			if mlabels := labels[cm.Name]; len(mlabels) > 0 {
-				l = append(l, mlabels...)
+
+			var labels []string
+			if len(cm.Labels) > 0 {
+				for k := range cm.Labels {
+					labels = append(labels, k)
+				}
+				sort.Strings(labels)
+				labels = append([]string{"file"}, labels...)
+			} else {
+				labels = []string{"file"}
 			}
-			log.Debugf("metric: %#v, labels: %#v", cm, l)
-			mg := metricsGroup{
-				lineMatchedCntr: prometheus.NewCounterVec(
-					prometheus.CounterOpts{
-						Namespace: cm.Name,
-						Name:      "lines_matched_total",
-						Help:      "Total number lines matched by worker",
-					},
-					l,
-				),
-				lineLastMatch: prometheus.NewGaugeVec(
-					prometheus.GaugeOpts{
-						Namespace: cm.Name,
-						Name:      "line_last_match_seconds",
-						Help:      "Last line match unix time",
-					},
-					l,
-				),
-				valuesExtracted: prometheus.NewGaugeVec(
-					prometheus.GaugeOpts{
-						Namespace: cm.Name,
-						Name:      "value",
-						Help:      "Values extracted from log files",
-					},
-					l,
-				),
-			}
-			m.metrics[cm.Name] = mg
-			mg.register()
-			log.Debugf("Registered %s with labels: %#v", cm.Name, l)
+
+			m.metrics[cm.Name] = newMetricsGroup(cm.Name, labels)
+			log.Debugf("Registered %s with labels: %#v", cm.Name, labels)
 		}
 	}
 }
 
+// UnregisterMetrics remove all configured collectors
 func (m *MetricCollection) UnregisterMetrics() {
 	for _, mg := range m.metrics {
 		mg.unregister()
@@ -122,6 +110,7 @@ func (m *MetricCollection) UnregisterMetrics() {
 	m.metrics = make(map[string]metricsGroup)
 }
 
+// Observe register event for metrics and labels
 func (m *MetricCollection) Observe(metric string, labels []string) {
 	log.Debugf("Observe: %s %#v", metric, labels)
 	mg := m.metrics[metric]
@@ -129,6 +118,7 @@ func (m *MetricCollection) Observe(metric string, labels []string) {
 	mg.lineLastMatch.WithLabelValues(labels...).SetToCurrentTime()
 }
 
+// ObserveWV register event for metrics and labels and store value
 func (m *MetricCollection) ObserveWV(metric string, labels []string, value float64) {
 	log.Debugf("ObserveWV: %s %#v, %v", metric, labels, value)
 	mg := m.metrics[metric]
