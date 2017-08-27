@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/common/log"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
+	"sort"
 	"strings"
 )
 
@@ -62,8 +63,6 @@ type (
 		Workers []*WorkerConf
 
 		XUnknown map[string]interface{} `yaml:",inline"`
-
-		StaticLabelsNames []string `yaml:"-"`
 	}
 )
 
@@ -139,44 +138,25 @@ func (c *Configuration) validate() error {
 	return nil
 }
 
-// prepareLabels look for configured labels and create one, common list of static labels
+// prepareLabels make list of static labels
 func (c *Configuration) prepareLabels() {
-	labelsMaps := make(map[string]int, 0)
-	labelsList := make([]string, 0)
-
-	// find all labels
 	for _, f := range c.Workers {
 		if f.Disabled {
 			continue
 		}
 
 		for _, m := range f.Metrics {
+			var labels []string
 			for k := range m.Labels {
-				if _, ok := labelsMaps[k]; !ok {
-					labelsMaps[k] = len(labelsList)
-					labelsList = append(labelsList, k)
-				}
+				labels = append(labels, k)
+			}
+			sort.Strings(labels)
+			m.StaticLabels = []string{f.File}
+			for _, k := range labels {
+				m.StaticLabels = append(m.StaticLabels, m.Labels[k])
 			}
 		}
 	}
-
-	// prepare static labels, not used labels gets values ""
-	for _, f := range c.Workers {
-		if f.Disabled {
-			continue
-		}
-
-		for _, m := range f.Metrics {
-			m.StaticLabels = make([]string, len(labelsList), len(labelsList))
-			for k, v := range m.Labels {
-				labIdx := labelsMaps[k]
-				m.StaticLabels[labIdx] = v
-			}
-		}
-	}
-
-	c.StaticLabelsNames = labelsList
-	log.Debugf("static labels: %#v", labelsList)
 }
 
 // LoadConfiguration from `filename`

@@ -77,9 +77,7 @@ var (
 		[]string{"file"},
 	)
 
-	lineMatchedCntr *prometheus.CounterVec
-	lineLastMatch   *prometheus.GaugeVec
-	valuesExtracted *prometheus.GaugeVec
+	metricsCollection *MetricCollection
 )
 
 func init() {
@@ -89,49 +87,12 @@ func init() {
 }
 
 func initMetrics(c *Configuration) {
-
-	if lineMatchedCntr != nil {
-		prometheus.Unregister(lineMatchedCntr)
+	if metricsCollection != nil {
+		metricsCollection.UnregisterMetrics()
+	} else {
+		metricsCollection = NewMetricCollection()
 	}
-
-	lineMatchedCntr = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "logmonitor",
-			Name:      "lines_matched_total",
-			Help:      "Total number lines matched by worker",
-		},
-		append([]string{"file", "metric"}, c.StaticLabelsNames...),
-	)
-
-	if lineLastMatch != nil {
-		prometheus.Unregister(lineLastMatch)
-	}
-
-	lineLastMatch = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "logmonitor",
-			Name:      "line_last_match_seconds",
-			Help:      "Last line match unix time",
-		},
-		append([]string{"file", "metric"}, c.StaticLabelsNames...),
-	)
-
-	if valuesExtracted != nil {
-		prometheus.Unregister(valuesExtracted)
-	}
-
-	valuesExtracted = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "logmonitor",
-			Name:      "value",
-			Help:      "Values extracted from log files",
-		},
-		append([]string{"file", "metric"}, c.StaticLabelsNames...),
-	)
-
-	prometheus.MustRegister(lineMatchedCntr)
-	prometheus.MustRegister(lineLastMatch)
-	prometheus.MustRegister(valuesExtracted)
+	metricsCollection.RegisterMetrics(c)
 }
 
 // Filters configure include/exclude patterns
@@ -350,18 +311,17 @@ func (w *Worker) read() {
 				continue
 			}
 
-			labels := append([]string{w.c.File, mf.name}, mf.labels...)
+			log.Debugf("accepted: %v, by %#v", line, mf)
 
-			//w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
-			lineMatchedCntr.WithLabelValues(labels...).Inc()
-			lineLastMatch.WithLabelValues(labels...).SetToCurrentTime()
-
-			if mf.extractPattern != nil {
+			if mf.extractPattern == nil {
+				metricsCollection.Observe(mf.name, mf.labels)
+			} else {
 				// extract value from line, convert to float64 and expose
 				m := mf.extractPattern.FindStringSubmatch(line)
+				log.Debug("%#v", len(m))
 				if len(m) > 1 {
 					if val, err := strconv.ParseFloat(m[1], 64); err == nil {
-						valuesExtracted.WithLabelValues(labels...).Set(val)
+						metricsCollection.ObserveWV(mf.name, mf.labels, val)
 					} else {
 						w.log.Info("convert '%v' in line '%v' to float failed: %s", m[1], line, err)
 					}
