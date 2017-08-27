@@ -1,3 +1,7 @@
+v1.2 2017-08-27
+* metric are created according to configuration and can get static labels 
+  per configuration
+
 v1.1 2017-08-25
 * journal: remeber last read position
 * journal: allow select records to process by required fields
