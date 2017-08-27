@@ -10,7 +10,7 @@ RPIROOT=/home/k/mnt/pi/
 GOTAGS=-tags 'sdjournal'
 
 #
-VERSION=1.1
+VERSION=1.2
 REVISION=`git describe --always`
 DATE=`date +%Y%m%d%H%M%S`
 USER=`whoami`

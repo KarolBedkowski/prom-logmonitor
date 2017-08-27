@@ -1,6 +1,10 @@
 logmonitor
-logmonitor-arm
+logmonitor-arm*
 *.swp
 tags
 *~
 .*
+stamp_*
+*.log
+*.orig
+

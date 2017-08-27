@@ -15,7 +15,6 @@ import (
 	"github.com/Merovius/systemd"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/prometheus/common/log"
 	"github.com/prometheus/common/version"
 )
 
@@ -25,6 +24,9 @@ var (
 		"Path to configuration file.")
 	listenAddress = flag.String("web.listen-address", ":9704",
 		"Address to listen on for web interface and telemetry.")
+	loglevel = flag.String("log.level", "info",
+		"Logging level (debug, info, warn, error, fatal)")
+	logFile = flag.String("log.file", "", "Write log to given file")
 )
 
 var (
@@ -51,6 +53,8 @@ func main() {
 		os.Exit(0)
 	}
 
+	InitializeLogger(*loglevel, *logFile)
+
 	systemd.NotifyStatus("starting")
 	systemd.AutoWatchdog()
 
@@ -62,6 +66,8 @@ func main() {
 		log.Fatalf("Error parsing config file: %s", err)
 		return
 	}
+
+	initMetrics(c)
 
 	http.Handle("/metrics", promhttp.Handler())
 
@@ -81,6 +87,7 @@ func main() {
 				for _, m := range monitors {
 					m.Stop()
 				}
+				initMetrics(c)
 				monitors = createWorkers(c)
 
 				log.Info("configuration reloaded")

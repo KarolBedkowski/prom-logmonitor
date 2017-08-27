@@ -8,7 +8,6 @@ package main
 import (
 	"github.com/hpcloud/tail"
 	"github.com/pkg/errors"
-	"github.com/prometheus/common/log"
 	"os"
 )
 
@@ -17,7 +16,7 @@ type PlainFileReader struct {
 	c *WorkerConf
 	t *tail.Tail
 
-	log log.Logger
+	log logger
 }
 
 func init() {
@@ -34,7 +33,7 @@ func (p *PlainFileReader) Match(conf *WorkerConf) (prio int) {
 }
 
 // Create new reader for plain files
-func (p *PlainFileReader) Create(conf *WorkerConf, l log.Logger) (pfr Reader, err error) {
+func (p *PlainFileReader) Create(conf *WorkerConf, l logger) (pfr Reader, err error) {
 	l.Infof("Monitoring '%s' by Plain File Reader", conf.File)
 	pfr = &PlainFileReader{
 		c:   conf,

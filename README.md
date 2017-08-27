@@ -8,7 +8,8 @@ Support monitoring SystemD Journal.
 ### Dependency
 
 * github.com/prometheus/client_golang/
-* github.com/prometheus/common
+* github.com/prometheus/common/version
+* github.com/sirupsen/logrus
 * github.com/hpcloud/tail
 * gopkg.in/yaml.v2
 * github.com/Merovius/systemd

@@ -7,8 +7,6 @@ package main
 
 import (
 	"github.com/pkg/errors"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/common/log"
 	"regexp"
 	"strconv"
 	"sync"
@@ -17,7 +15,7 @@ import (
 // ReaderDef define interface for readers
 type ReaderDef interface {
 	Match(conf *WorkerConf) (prio int)
-	Create(conf *WorkerConf, l log.Logger) (p Reader, err error)
+	Create(conf *WorkerConf, l logger) (p Reader, err error)
 }
 
 var registeredReaders struct {
@@ -49,68 +47,15 @@ func getReaderForConf(conf *WorkerConf) (rd ReaderDef) {
 	return
 }
 
-var (
-	lineProcessedCntr = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "logmonitor",
-			Name:      "lines_processed_total",
-			Help:      "Total number lines processed by worker",
-		},
-		[]string{"file"},
-	)
+var metricsCollection *MetricCollection
 
-	lineMatchedCntr = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "logmonitor",
-			Name:      "lines_matched_total",
-			Help:      "Total number lines matched by worker",
-		},
-		[]string{"file", "metric"},
-	)
-
-	lineErrosCntr = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "logmonitor",
-			Name:      "lines_read_errors_total",
-			Help:      "Total number errors occurred while reading lines by worker",
-		},
-		[]string{"file"},
-	)
-
-	lineLastMatch = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "logmonitor",
-			Name:      "line_last_match_seconds",
-			Help:      "Last line match unix time",
-		},
-		[]string{"file", "metric"},
-	)
-	lineLastProcessed = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "logmonitor",
-			Name:      "line_last_processed_seconds",
-			Help:      "Last line processed unix time",
-		},
-		[]string{"file"},
-	)
-
-	valuesExtracted = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "logmonitor",
-			Name:      "value",
-			Help:      "Values extracted from log files",
-		},
-		[]string{"file", "metric"},
-	)
-)
-
-func init() {
-	prometheus.MustRegister(lineProcessedCntr)
-	prometheus.MustRegister(lineMatchedCntr)
-	prometheus.MustRegister(lineErrosCntr)
-	prometheus.MustRegister(lineLastMatch)
-	prometheus.MustRegister(lineLastProcessed)
-	prometheus.MustRegister(valuesExtracted)
+func initMetrics(c *Configuration) {
+	if metricsCollection != nil {
+		metricsCollection.UnregisterMetrics()
+	} else {
+		metricsCollection = NewMetricCollection()
+	}
+	metricsCollection.RegisterMetrics(c)
 }
 
 // Filters configure include/exclude patterns
@@ -182,6 +127,7 @@ type Reader interface {
 type metricFilters struct {
 	name    string
 	filters []*Filters
+	labels  []string
 
 	extractPattern *regexp.Regexp
 }
@@ -210,7 +156,7 @@ type Worker struct {
 
 	metrics []*metricFilters
 
-	log    log.Logger
+	log    logger
 	reader Reader
 
 	stopping bool
@@ -248,6 +194,7 @@ func NewWorker(conf *WorkerConf) (worker *Worker, err error) {
 		mf := &metricFilters{
 			name:    metric.Name,
 			filters: ftrs,
+			labels:  metric.StaticLabels,
 		}
 
 		if metric.ValuePattern != "" {
@@ -311,7 +258,7 @@ func (w *Worker) read() {
 
 		if err != nil {
 			w.log.Info("read file error:", err.Error())
-			lineErrosCntr.WithLabelValues(w.c.File).Inc()
+			ObserveReadError(w.c.File)
 			continue
 		}
 
@@ -319,24 +266,21 @@ func (w *Worker) read() {
 			continue
 		}
 
-		lineProcessedCntr.WithLabelValues(w.c.File).Inc()
-		lineLastProcessed.WithLabelValues(w.c.File).SetToCurrentTime()
+		ObserveReadError(w.c.File)
 
 		for _, mf := range w.metrics {
 			if !mf.AcceptLine(line) {
 				continue
 			}
 
-			//w.log.Debugf("accepted line '%v' to '%v' by '%v'", line, mf.name, mf.filters)
-			lineMatchedCntr.WithLabelValues(w.c.File, mf.name).Inc()
-			lineLastMatch.WithLabelValues(w.c.File, mf.name).SetToCurrentTime()
-
-			if mf.extractPattern != nil {
+			if mf.extractPattern == nil {
+				metricsCollection.Observe(mf.name, mf.labels)
+			} else {
 				// extract value from line, convert to float64 and expose
 				m := mf.extractPattern.FindStringSubmatch(line)
 				if len(m) > 1 {
 					if val, err := strconv.ParseFloat(m[1], 64); err == nil {
-						valuesExtracted.WithLabelValues(w.c.File, mf.name).Set(val)
+						metricsCollection.ObserveWV(mf.name, mf.labels, val)
 					} else {
 						w.log.Info("convert '%v' in line '%v' to float failed: %s", m[1], line, err)
 					}

@@ -6,9 +6,10 @@ package main
 
 import (
 	"github.com/pkg/errors"
-	"github.com/prometheus/common/log"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
+	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -32,8 +33,12 @@ type (
 		// Disabled allow disable some workers
 		Disabled bool
 
+		Labels map[string]string
+
 		// ValuePattern define re pattern extracted from line and exposed as metrics.
 		ValuePattern string `yaml:"value_pattern"`
+
+		StaticLabels []string `yaml:"-"`
 	}
 
 	// WorkerConf configure one worker
@@ -60,6 +65,8 @@ type (
 		XUnknown map[string]interface{} `yaml:",inline"`
 	}
 )
+
+var isValidName = regexp.MustCompile(`^[a-zA-Z][_a-zA-Z0-9]*$`).MatchString
 
 func checkUnknown(m map[string]interface{}) (invalid string) {
 	if len(m) == 0 {
@@ -98,6 +105,8 @@ func (c *Configuration) validate() error {
 		log.Warnf("unknown fields in configuraton: %s", msg)
 	}
 
+	definedLabels := make(map[string][]string)
+
 	for i, f := range c.Workers {
 		if f.Disabled {
 			continue
@@ -107,30 +116,43 @@ func (c *Configuration) validate() error {
 			log.Warnf("unknown fields in worker %d [%s]: %s", i+1, f.Metrics, msg)
 		}
 
-		definedMetris := make(map[string]int)
-
 		for i, m := range f.Metrics {
 			if m.Disabled {
 				continue
 			}
-			if m.Name == "" {
-				return errors.Errorf("missing metric name in %+v", m)
+
+			if err := m.validate(f, i); err != nil {
+				return err
 			}
 
-			for j, p := range m.Patterns {
-				if msg := checkUnknown(p.XUnknown); msg != "" {
-					log.Warnf("unknown fields in worker %d [%s] patterns %d: %s", i+1, f.Metrics, j+1, msg)
-				}
+			if err := m.validateLabels(f, i, definedLabels); err != nil {
+				return err
 			}
-
-			if ruleNum, exists := definedMetris[m.Name]; exists {
-				return errors.Errorf("metric '%s' for '%s' already defined in rule %d", m.Name, f.File, ruleNum)
-			}
-			definedMetris[m.Name] = i + 1
 		}
 	}
 
 	return nil
+}
+
+// prepareLabels make list of static labels
+func (c *Configuration) prepareLabels() {
+	for _, f := range c.Workers {
+		if f.Disabled {
+			continue
+		}
+
+		for _, m := range f.Metrics {
+			var labels []string
+			for k := range m.Labels {
+				labels = append(labels, k)
+			}
+			sort.Strings(labels)
+			m.StaticLabels = []string{f.File}
+			for _, k := range labels {
+				m.StaticLabels = append(m.StaticLabels, m.Labels[k])
+			}
+		}
+	}
 }
 
 // LoadConfiguration from `filename`
@@ -150,5 +172,57 @@ func LoadConfiguration(filename string) (*Configuration, error) {
 		return nil, errors.Wrap(err, "configuration validate error")
 	}
 
+	c.prepareLabels()
+
 	return c, nil
+}
+
+func (m *Metric) validate(f *WorkerConf, i int) error {
+	if m.Name == "" {
+		return errors.Errorf("missing metric name in %+v", m)
+	}
+
+	if !isValidName(m.Name) {
+		return errors.Errorf("invalid metric name: '%s'", m.Name)
+	}
+
+	for j, p := range m.Patterns {
+		if msg := checkUnknown(p.XUnknown); msg != "" {
+			log.Warnf("unknown fields in worker %d [%s] patterns %d: %s", i+1, f.Metrics, j+1, msg)
+		}
+	}
+
+	return nil
+}
+
+func (m *Metric) validateLabels(f *WorkerConf, i int, definedLabels map[string][]string) error {
+	var mlabels []string
+	for label := range m.Labels {
+		if !isValidName(label) {
+			return errors.Errorf("invalid label name '%s' in '%s'", label, m.Name)
+		}
+		mlabels = append(mlabels, label)
+	}
+
+	sort.Strings(mlabels)
+
+	dlabels, ok := definedLabels[m.Name]
+	if !ok {
+		definedLabels[m.Name] = mlabels
+		return nil
+	}
+
+	if len(dlabels) != len(mlabels) {
+		return errors.Errorf("invalid number of labels (%v) in '%s', defined: %v",
+			mlabels, m.Name, dlabels)
+	}
+
+	for i, l := range dlabels {
+		if l != mlabels[i] {
+			return errors.Errorf("invalid labels on pos %d in '%s' (%v), defined: %v",
+				i+1, m.Name, mlabels, dlabels)
+		}
+	}
+
+	return nil
 }

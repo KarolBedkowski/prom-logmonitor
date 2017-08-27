@@ -14,7 +14,6 @@ import "C"
 
 import (
 	"github.com/pkg/errors"
-	"github.com/prometheus/common/log"
 	"io/ioutil"
 	"strings"
 	"time"
@@ -29,7 +28,7 @@ type SDJournalReader struct {
 	filter  []string
 	closing bool
 
-	log log.Logger
+	log logger
 }
 
 func init() {
@@ -44,7 +43,7 @@ func (s *SDJournalReader) Match(conf *WorkerConf) (prio int) {
 }
 
 // NewSDJournalReader create reader for systemd journal
-func (s *SDJournalReader) Create(conf *WorkerConf, l log.Logger) (Reader, error) {
+func (s *SDJournalReader) Create(conf *WorkerConf, l logger) (Reader, error) {
 	l.Infof("Monitoring '%s' by SystemD Journal Reader", conf.File)
 	w := &SDJournalReader{
 		c:   conf,
