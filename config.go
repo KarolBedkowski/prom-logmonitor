@@ -117,8 +117,6 @@ func (c *Configuration) validate() error {
 			log.Warnf("unknown fields in worker %d [%s]: %s", i+1, f.Metrics, msg)
 		}
 
-		definedMetris := make(map[string]int)
-
 		for i, m := range f.Metrics {
 			if m.Disabled {
 				continue
@@ -131,12 +129,6 @@ func (c *Configuration) validate() error {
 			if err := m.validateLabels(f, i, definedLabels); err != nil {
 				return err
 			}
-
-			if ruleNum, exists := definedMetris[m.Name]; exists {
-				return errors.Errorf("metric '%s' for '%s' already defined in rule %d", m.Name, f.File, ruleNum)
-			}
-
-			definedMetris[m.Name] = i + 1
 		}
 	}
 
