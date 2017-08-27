@@ -9,10 +9,13 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/crypto/ssh/terminal"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -39,7 +42,6 @@ var log = logger{logrus.NewEntry(baseLogger)}
 
 // InitializeLogger set log level and optional log filename
 func InitializeLogger(level, filename string) {
-	baseLogger.Formatter = &logrus.TextFormatter{}
 
 	lev, err := logrus.ParseLevel(level)
 	if err != nil {
@@ -48,12 +50,19 @@ func InitializeLogger(level, filename string) {
 
 	baseLogger.Level = lev
 
-	if filename != "" {
+	if filename == "" {
+		if o, ok := baseLogger.Out.(*os.File); ok && terminal.IsTerminal(int(o.Fd())) {
+			baseLogger.Formatter = &logrus.TextFormatter{}
+		} else {
+			baseLogger.Formatter = &simpleFormatter{}
+		}
+	} else {
 		file, err := os.OpenFile(filename, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0660)
 		if err != nil {
 			panic("failed to use '" + filename + "' for logging: " + err.Error())
 		}
 		baseLogger.Out = file
+		baseLogger.Formatter = &logrus.TextFormatter{}
 	}
 }
 
@@ -134,4 +143,41 @@ func (l *logger) Fatalf(format string, args ...interface{}) {
 
 func (l *logger) With(key string, value interface{}) logger {
 	return logger{l.entry.WithField(key, value)}
+}
+
+type simpleFormatter struct {
+}
+
+func (s *simpleFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	var b *bytes.Buffer
+	if entry.Buffer != nil {
+		b = entry.Buffer
+	} else {
+		b = &bytes.Buffer{}
+	}
+	b.WriteString(entry.Level.String())
+	for i := 7 - b.Len(); i > 0; i-- {
+		b.WriteByte(' ')
+	}
+
+	if entry.Message != "" {
+		b.WriteByte(' ')
+		b.WriteString(fmt.Sprintf("%q", entry.Message))
+		for i := 80 - b.Len(); i > 0; i-- {
+			b.WriteByte(' ')
+		}
+	}
+	keys := make([]string, 0, len(entry.Data))
+	for k := range entry.Data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		b.WriteByte(' ')
+		b.WriteString(key)
+		b.WriteByte('=')
+		b.WriteString(fmt.Sprintf("%q", entry.Data[key]))
+	}
+	b.WriteByte('\n')
+	return b.Bytes(), nil
 }
