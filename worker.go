@@ -7,7 +7,6 @@ package main
 
 import (
 	"github.com/pkg/errors"
-	"github.com/prometheus/client_golang/prometheus"
 	"regexp"
 	"strconv"
 	"sync"
@@ -48,42 +47,7 @@ func getReaderForConf(conf *WorkerConf) (rd ReaderDef) {
 	return
 }
 
-var (
-	lineProcessedCntr = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "logmonitor",
-			Name:      "lines_processed_total",
-			Help:      "Total number lines processed by worker",
-		},
-		[]string{"file"},
-	)
-
-	lineErrosCntr = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "logmonitor",
-			Name:      "lines_read_errors_total",
-			Help:      "Total number errors occurred while reading lines by worker",
-		},
-		[]string{"file"},
-	)
-
-	lineLastProcessed = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "logmonitor",
-			Name:      "line_last_processed_seconds",
-			Help:      "Last line processed unix time",
-		},
-		[]string{"file"},
-	)
-
-	metricsCollection *MetricCollection
-)
-
-func init() {
-	prometheus.MustRegister(lineProcessedCntr)
-	prometheus.MustRegister(lineLastProcessed)
-	prometheus.MustRegister(lineErrosCntr)
-}
+var metricsCollection *MetricCollection
 
 func initMetrics(c *Configuration) {
 	if metricsCollection != nil {
@@ -294,7 +258,7 @@ func (w *Worker) read() {
 
 		if err != nil {
 			w.log.Info("read file error:", err.Error())
-			lineErrosCntr.WithLabelValues(w.c.File).Inc()
+			ObserveReadError(w.c.File)
 			continue
 		}
 
@@ -302,22 +266,18 @@ func (w *Worker) read() {
 			continue
 		}
 
-		lineProcessedCntr.WithLabelValues(w.c.File).Inc()
-		lineLastProcessed.WithLabelValues(w.c.File).SetToCurrentTime()
+		ObserveReadError(w.c.File)
 
 		for _, mf := range w.metrics {
 			if !mf.AcceptLine(line) {
 				continue
 			}
 
-			log.Debugf("accepted: %v, by %#v", line, mf)
-
 			if mf.extractPattern == nil {
 				metricsCollection.Observe(mf.name, mf.labels)
 			} else {
 				// extract value from line, convert to float64 and expose
 				m := mf.extractPattern.FindStringSubmatch(line)
-				log.Debug("%#v", len(m))
 				if len(m) > 1 {
 					if val, err := strconv.ParseFloat(m[1], 64); err == nil {
 						metricsCollection.ObserveWV(mf.name, mf.labels, val)

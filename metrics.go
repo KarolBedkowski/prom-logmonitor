@@ -1,6 +1,6 @@
 //
 // metrics.go
-// Copyright (C) 2017 Karol Będkowski <Karol Będkowski@kntbk>
+// Copyright (C) Karol Będkowski, 2017
 //
 // Distributed under terms of the GPLv3 license.
 //
@@ -123,4 +123,50 @@ func (m *MetricCollection) ObserveWV(metric string, labels []string, value float
 	mg.lineMatchedCntr.WithLabelValues(labels...).Inc()
 	mg.lineLastMatch.WithLabelValues(labels...).SetToCurrentTime()
 	mg.valuesExtracted.WithLabelValues(labels...).Set(value)
+}
+
+var (
+	lineProcessedCntr = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "logmonitor",
+			Name:      "lines_processed_total",
+			Help:      "Total number lines processed by worker",
+		},
+		[]string{"file"},
+	)
+
+	lineErrosCntr = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "logmonitor",
+			Name:      "lines_read_errors_total",
+			Help:      "Total number errors occurred while reading lines by worker",
+		},
+		[]string{"file"},
+	)
+
+	lineLastProcessed = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "logmonitor",
+			Name:      "line_last_processed_seconds",
+			Help:      "Last line processed unix time",
+		},
+		[]string{"file"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(lineProcessedCntr)
+	prometheus.MustRegister(lineLastProcessed)
+	prometheus.MustRegister(lineErrosCntr)
+}
+
+// ObserveReadError mark read file error
+func ObserveReadError(filename string) {
+	lineErrosCntr.WithLabelValues(filename).Inc()
+}
+
+// ObserveReadSuccess mark read file success
+func ObserveReadSuccess(filename string) {
+	lineProcessedCntr.WithLabelValues(filename).Inc()
+	lineLastProcessed.WithLabelValues(filename).SetToCurrentTime()
 }
