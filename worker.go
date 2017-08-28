@@ -266,7 +266,7 @@ func (w *Worker) read() {
 			continue
 		}
 
-		ObserveReadError(w.c.File)
+		ObserveReadSuccess(w.c.File)
 
 		for _, mf := range w.metrics {
 			if !mf.AcceptLine(line) {
